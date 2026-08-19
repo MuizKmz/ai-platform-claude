@@ -54,10 +54,12 @@ jobs:
       REDIS_PORT: 6379
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        # v7 is the newest floating major tag and runs on Node 24. v6 targeted Node 20, which GitHub deprecated
+        # and now force-runs on 24 with a warning on every build.
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
