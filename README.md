@@ -307,20 +307,40 @@ lands in `trace_span`.
 
 ### Retrieval quality baseline
 
-**Recall@5 = 1.00 (20/20)** on the golden set, against a 0.80 target.
+Golden set: **55 questions** — 34 semantic (paraphrased, sharing no words with the answer),
+10 exact-identifier, 10 deliberately unanswerable.
 
-The 20 questions are deliberately phrased in different words from the documents — "How long
-until I get my money back?" must retrieve a section that never says "money back". A question
-reusing the answer's vocabulary would measure keyword matching rather than retrieval.
+| | R@1 | R@3 | R@5 | MRR |
+|---|---|---|---|---|
+| semantic | 0.88 | 1.00 | 1.00 | 0.931 |
+| exact | 1.00 | 1.00 | 1.00 | 1.000 |
+| **overall** | **0.91** | **1.00** | **1.00** | **0.947** |
 
 ```powershell
 cd backend
-uv run python ../evals/run_recall.py   # needs OPENAI_API_KEY; costs a few cents
+uv run python ../evals/retrieval_eval.py   # needs OPENAI_API_KEY; costs a few cents
 ```
+
+Recall@5 saturates on a corpus this size, so **Recall@1 is the number to watch** — and it is
+the one that matters anyway, since the generator reads the top chunk first and its context
+window is finite.
 
 This is a script rather than a CI test on purpose: it uses real embeddings, so it costs
 money and needs a key. The deterministic fake used in tests cannot measure semantic quality
 by construction.
+
+### Hybrid search is built, and turned off
+
+`HYBRID_SEARCH_ENABLED=false`. Measured against the baseline above, adding keyword retrieval
+made results **monotonically worse** — 0.91 → 0.68 overall Recall@1 at equal weighting.
+
+The cause is worth knowing: table-aware chunking already keeps identifiers in a chunk that
+also contains their column headings, so semantic search finds them without help. Exact-term
+Recall@1 is already 1.00; hybrid has nothing to rescue, and its OR-matching drags in noise.
+
+Full numbers and the conditions that would change the decision:
+[docs/experiments/hybrid-search-comparison.md](docs/experiments/hybrid-search-comparison.md).
+Chunk-size comparison: [docs/experiments/chunking-comparison.md](docs/experiments/chunking-comparison.md).
 
 ## Asking questions
 

@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # tokens, and it dilutes the relevant passage among less relevant ones.
     rag_top_k: int = 5
 
+    # Hybrid retrieval is built and tested but OFF by default: it measured a
+    # 23-point regression in overall Recall@1 on the current corpus. See
+    # docs/experiments/hybrid-search-comparison.md before enabling.
+    hybrid_search_enabled: bool = False
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:

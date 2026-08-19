@@ -1,48 +1,191 @@
 # Golden set for retrieval evaluation.
 #
-# Questions are deliberately phrased the way a person would ask them, NOT using
-# the words in the document. A question that repeats the answer's vocabulary
-# measures keyword matching, not retrieval.
+# Questions are phrased the way a person would ask them, NOT using the words in
+# the document. A question that repeats the answer's vocabulary measures keyword
+# overlap rather than retrieval, and would score well on a system that is
+# actually broken.
 #
-# `expects` is the heading of the section that should be retrieved.
+# `expects` names the section that must be retrieved. `kind` groups questions so
+# the scorecard can report where a retriever is strong and where it is weak —
+# an aggregate number hides exactly the trade-off hybrid search exists to fix.
+#
+#   semantic   — meaning-based; the answer shares no words with the question
+#   exact      — an identifier that must match literally (part numbers, codes)
+#   unanswerable — the corpus does not contain the answer; retrieving nothing
+#                  confidently is the correct outcome
+
+# --- semantic: paraphrased questions ----------------------------------------
 
 - question: How long until I get my money back?
   expects: Refund Policy
+  kind: semantic
 - question: What is the deadline for asking to return something?
   expects: Refund Policy
+  kind: semantic
+- question: Where does the money go once a return is approved?
+  expects: Refund Policy
+  kind: semantic
 - question: Do I have to pay for delivery?
   expects: Shipping
+  kind: semantic
 - question: How fast can I get my order if I pay extra?
   expects: Shipping
+  kind: semantic
 - question: What happens if my laptop breaks by itself?
   expects: Warranty
+  kind: semantic
 - question: Is dropping my device covered?
   expects: Warranty
+  kind: semantic
 - question: How long do you keep my information after I leave?
   expects: Data Retention
+  kind: semantic
 - question: When are old backups destroyed?
   expects: Data Retention
+  kind: semantic
 - question: Who can see internal systems?
   expects: Access Control
+  kind: semantic
 - question: How quickly is access removed when someone quits?
   expects: Access Control
+  kind: semantic
 - question: How long does my passphrase need to be?
   expects: Password Requirements
+  kind: semantic
 - question: Do I need a second factor to sign in?
   expects: Password Requirements
+  kind: semantic
 - question: How fast do you react to a security problem?
   expects: Incident Response
+  kind: semantic
 - question: When will I hear about a data breach?
   expects: Incident Response
+  kind: semantic
 - question: How much time off do I get each year?
   expects: Vacation Policy
+  kind: semantic
 - question: Can I carry unused leave into next year?
   expects: Vacation Policy
+  kind: semantic
 - question: Do I need permission before buying something small?
   expects: Expense Claims
+  kind: semantic
 - question: How long do I have to file a receipt?
   expects: Expense Claims
+  kind: semantic
 - question: Can I work from home?
   expects: Remote Work
+  kind: semantic
 - question: What if I never want to come to the office?
   expects: Remote Work
+  kind: semantic
+- question: What happens in my first few days at the company?
+  expects: Onboarding
+  kind: semantic
+- question: How long before I get a computer?
+  expects: Onboarding
+  kind: semantic
+- question: Who signs off on a large purchase?
+  expects: Procurement
+  kind: semantic
+- question: Can I buy from any company I like?
+  expects: Procurement
+  kind: semantic
+- question: When can I reach someone for help?
+  expects: Support Hours
+  kind: semantic
+- question: Is there help available in the middle of the night?
+  expects: Support Hours
+  kind: semantic
+- question: What happens when something breaks urgently?
+  expects: Escalation
+  kind: semantic
+- question: How often is everything copied for safekeeping?
+  expects: Backup Schedule
+  kind: semantic
+- question: How long are nightly copies kept?
+  expects: Backup Schedule
+  kind: semantic
+- question: Can I push to production without anyone looking?
+  expects: Change Management
+  kind: semantic
+- question: What do I do after an emergency fix?
+  expects: Change Management
+  kind: semantic
+- question: What class do I fly for a short trip?
+  expects: Travel Policy
+  kind: semantic
+- question: Can I get a better seat on a long flight?
+  expects: Travel Policy
+  kind: semantic
+
+# --- exact: identifiers that must match literally ---------------------------
+# These are where dense embeddings struggle. QN-1183-A and ZK-9021-C embed close
+# together because they LOOK alike; only keyword matching separates them.
+
+- question: What is the lead time for QN-1183-A?
+  expects: Parts Catalogue
+  kind: exact
+- question: How much does XR-7742-B cost?
+  expects: Parts Catalogue
+  kind: exact
+- question: What is ZK-9021-C?
+  expects: Parts Catalogue
+  kind: exact
+- question: Price of MB-4460-D
+  expects: Parts Catalogue
+  kind: exact
+- question: LP-3390-E lead time
+  expects: Parts Catalogue
+  kind: exact
+- question: What does error E-402 mean?
+  expects: Error Codes
+  kind: exact
+- question: How do I fix E-733?
+  expects: Error Codes
+  kind: exact
+- question: E-905 what should I do
+  expects: Error Codes
+  kind: exact
+- question: What action is required for E-511?
+  expects: Error Codes
+  kind: exact
+- question: I am seeing an E-402 shutdown
+  expects: Error Codes
+  kind: exact
+
+# --- unanswerable: the corpus is silent -------------------------------------
+# Retrieving nothing relevant is the correct outcome. These do not count toward
+# recall; they are scored separately, because a retriever that returns confident
+# nonsense here is worse than one that returns nothing.
+
+- question: What is the CEO's home address?
+  expects: null
+  kind: unanswerable
+- question: How do I reset a customer's password for them?
+  expects: null
+  kind: unanswerable
+- question: What is the company's revenue this quarter?
+  expects: null
+  kind: unanswerable
+- question: Which competitor should we acquire?
+  expects: null
+  kind: unanswerable
+- question: What is the root password for the production database?
+  expects: null
+  kind: unanswerable
+- question: How many employees were dismissed last year?
+  expects: null
+  kind: unanswerable
+- question: What is the lead time for part ZZ-0000-X?
+  expects: null
+  kind: unanswerable
+- question: What does error E-999 mean?
+  expects: null
+  kind: unanswerable
+- question: Who won the 1994 World Cup?
+  expects: null
+  kind: unanswerable
+- question: What is our pricing strategy for next year?
+  expects: null
+  kind: unanswerable

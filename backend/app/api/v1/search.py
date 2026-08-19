@@ -11,8 +11,10 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from app.api.deps import CurrentPrincipal, TenantDB
+from app.core.config import settings
 from app.knowledge.embedding import get_embedding_provider
-from app.knowledge.retrieval import MAX_LIMIT, search
+from app.knowledge.hybrid import hybrid_search
+from app.knowledge.retrieval import MAX_LIMIT, SearchHit, search
 from app.observability.tracing import new_trace_id, trace
 
 router = APIRouter(prefix="/v1", tags=["knowledge"])
@@ -37,6 +39,35 @@ class SearchResponse(BaseModel):
     trace_id: str
 
 
+def _retrieve(db, q: str, principal, limit: int) -> list[SearchHit]:  # type: ignore[no-untyped-def]
+    """Vector search, or hybrid when enabled.
+
+    A flag rather than a code path choice, so switching strategy is a config edit
+    and the eval harness can compare the two without a deploy.
+    """
+    provider = get_embedding_provider()
+    if settings.hybrid_search_enabled:
+        return [
+            fused.hit
+            for fused in hybrid_search(
+                db,
+                query=q,
+                tenant_id=principal.tenant_id,
+                allowed_labels=principal.allowed_labels,
+                provider=provider,
+                limit=limit,
+            )
+        ]
+    return search(
+        db,
+        query=q,
+        tenant_id=principal.tenant_id,
+        allowed_labels=principal.allowed_labels,
+        provider=provider,
+        limit=limit,
+    )
+
+
 @router.get("/search", response_model=SearchResponse)
 def search_endpoint(
     principal: CurrentPrincipal,
@@ -52,14 +83,7 @@ def search_endpoint(
     trace_id = new_trace_id()
 
     with trace(db, "knowledge.search", tenant_id=principal.tenant_id, trace_id=trace_id) as span:
-        hits = search(
-            db,
-            query=q,
-            tenant_id=principal.tenant_id,
-            allowed_labels=principal.allowed_labels,
-            provider=get_embedding_provider(),
-            limit=limit,
-        )
+        hits = _retrieve(db, q, principal, limit)
         # Counts and lengths only. Query text and chunk content stay out of the
         # trace: a span table is a second copy of tenant data that nobody thinks
         # to review.

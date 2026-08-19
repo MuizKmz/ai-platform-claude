@@ -18,6 +18,12 @@ class Document(Base):
     __table_args__ = (
         # Re-ingesting an unchanged file must not duplicate it. The hash is of
         # content, so a moved or renamed file with identical bytes is still one document.
+        # NOTE: the live database carries this as a PARTIAL unique index
+        # (uq_document_tenant_hash_live, WHERE superseded_at IS NULL) — see
+        # migration 0a96d4380fe4. A partial index cannot be expressed here, so
+        # autogenerate will keep proposing to replace it with this plain
+        # constraint. Reject that: as a plain constraint it blocks re-ingesting
+        # content that was superseded.
         UniqueConstraint("tenant_id", "content_hash", name="uq_document_tenant_hash"),
         # Retrieval filters on superseded_at IS NULL on every query, so it is
         # worth an index rather than a sequential scan over the whole corpus.
