@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     # docs/experiments/hybrid-search-comparison.md before enabling.
     hybrid_search_enabled: bool = False
 
+    # --- Connectors -------------------------------------------------------
+    # Encrypts connector credentials before they reach the database, with a key
+    # that lives outside it — so a backup or a stolen dump contains ciphertext.
+    # Required with no default: a shared default key protects nobody.
+    credential_encryption_key: str = ""
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
