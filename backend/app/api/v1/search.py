@@ -76,7 +76,10 @@ def search_endpoint(
                 document_title=hit.document_title,
                 content=hit.content,
                 ordinal=hit.ordinal,
-                score=hit.score,
+                # Rounded at the boundary. Float64 precision on a similarity
+                # score is noise, not information, and it makes responses hard
+                # to read and hard to diff in tests.
+                score=round(hit.score, 4),
             )
             for hit in hits
         ],
