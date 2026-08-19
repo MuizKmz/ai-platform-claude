@@ -35,6 +35,8 @@ _REPEAT_THRESHOLD = 0.6
 # Tables need at least this many consecutive tabular lines, so a single
 # wide-spaced sentence is not mistaken for one.
 _MIN_TABLE_ROWS = 2
+# Above this, the first heading describes page 1 rather than the document.
+_SHORT_DOCUMENT_PAGES = 3
 
 
 class PdfParser:
@@ -124,8 +126,15 @@ class PdfParser:
 
             flush()
 
-        title = next((b.text for b in blocks if b.type is BlockType.HEADING), None)
-        return ParsedDocument(blocks=blocks, page_count=len(pages), title=title or path.stem)
+        # The filename is usually the better title for a long PDF. The first
+        # heading in a 200-page handbook is whatever page 1 happens to start
+        # with — "Section 1" — which tells a reader nothing about the document a
+        # citation came from.
+        return ParsedDocument(
+            blocks=blocks,
+            page_count=len(pages),
+            title=_document_title(path, blocks, len(pages)),
+        )
 
 
 def _repeated_lines(pages: list[str]) -> set[str]:
@@ -167,3 +176,16 @@ def _looks_like_heading(line: str) -> bool:
     if len(stripped) > 80 or stripped.endswith((".", ",", ";", ":")):
         return False
     return bool(_HEADING_LIKE.match(stripped))
+
+
+def _document_title(path: Path, blocks: list[Block], page_count: int) -> str:
+    """Pick the most useful title for citation.
+
+    A single-page extract is well described by its first heading. A long document
+    is not: page 1's heading describes page 1, while the filename describes the
+    whole thing, which is what a citation needs to name.
+    """
+    first_heading = next((b.text for b in blocks if b.type is BlockType.HEADING), None)
+    if page_count > _SHORT_DOCUMENT_PAGES or not first_heading:
+        return path.stem
+    return first_heading

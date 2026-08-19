@@ -186,3 +186,14 @@ def test_headings_are_not_emitted_as_their_own_chunks() -> None:
     assert not any(c.content.strip() == "Ordering" for c in chunks)
     # But the heading survives as context on the chunk that follows it.
     assert any(c.heading == "Ordering" for c in chunks)
+
+
+def test_long_pdf_is_titled_by_filename_not_its_first_heading() -> None:
+    """A citation must name the document, not page 1 of it.
+
+    The first heading in a 200-page handbook is whatever page 1 starts with —
+    "Section 1" — which tells a reader nothing about where a fact came from.
+    """
+    parsed = parse_document(DOCUMENTS / "handbook.pdf")
+
+    assert parsed.title == "handbook"
