@@ -1,0 +1,12 @@
+# Normalize text files in the repo to LF.
+* text=auto eol=lf
+
+# Shell scripts MUST be LF. A CRLF init.sh fails inside a Linux container with
+# an opaque "no such file or directory" on the shebang line.
+*.sh text eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.pdf binary
+*.docx binary

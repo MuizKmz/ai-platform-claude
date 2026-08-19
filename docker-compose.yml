@@ -1,0 +1,43 @@
+# Phase 0 infrastructure. Two services only.
+# Start:  docker compose up -d
+# Stop:   docker compose down          (keeps data)
+# Reset:  docker compose down -v       (DESTROYS data, re-runs init.sql)
+
+services:
+  postgres:
+    # pgvector's official image = postgres 17 with the vector extension preinstalled.
+    image: pgvector/pgvector:pg17
+    container_name: eaip-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Consumed by init.sql via psql variable substitution.
+      POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Scripts here run ONCE, only when the data volume is empty.
+      - ./infra/postgres/init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: eaip-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
