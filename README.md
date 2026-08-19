@@ -7,10 +7,29 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 - **Phase plan:** [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md)
 - **Working rules for AI sessions:** [CLAUDE.md](CLAUDE.md)
 
-## Status: Phase 0 — Foundation
+## Status
 
-A repository, a pinned toolchain, Postgres + pgvector, Redis, and a real `/health`.
-**No LLM, no retrieval, no connectors, no frontend yet.** That is deliberate — see the roadmap.
+| Phase | State |
+|---|---|
+| **0 — Foundation** | ✅ Complete. Repo, pinned toolchain, Postgres 17 + pgvector 0.8.6, Redis, real `/health`, green CI |
+| **1 — Tenant-scoped retrieval** | 🚧 In progress (stage 1 of 4: schema + Row-Level Security done) |
+
+**No LLM, no retrieval endpoint, no connectors, no frontend yet.** That is deliberate — see
+the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
+
+### Security guarantees currently enforced
+
+These are tested on every push, not aspirations:
+
+- Tenant isolation is a **database** guarantee, not application discipline. Row-Level
+  Security is enabled *and forced* on `document`, `chunk`, and `app_user`.
+- A query with no tenant context returns **zero rows**, not every row — default-deny.
+- The runtime role (`app_rw`) is explicitly `NOSUPERUSER NOBYPASSRLS`. A superuser bypasses
+  RLS unconditionally, so this property is what the whole guarantee rests on; a test asserts
+  it, because every other isolation test still passes while isolation is silently gone.
+- Generated SQL will use a read-only role enforced by Postgres, not by string inspection.
+
+Run them yourself: `cd backend && uv run pytest -m security -v`
 
 ---
 
