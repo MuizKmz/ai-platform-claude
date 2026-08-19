@@ -412,6 +412,45 @@ unsearchable — cosine distance between vectors from different models is a mean
 number, not an error. Re-indexing touches vectors only; **labels are never modified**,
 since a reindex that reset them would quietly widen who can see a document.
 
+## Background ingestion
+
+Ingesting a 200-page PDF takes minutes. The API never does it inline — it queues a job and
+returns an id.
+
+**Start the worker** (a second process, alongside the API):
+
+```powershell
+cd backend
+uv run arq app.worker.main.WorkerSettings
+```
+
+**Submit and track a job** (requires the `admin` role):
+
+```powershell
+$token = uv run python -m app.cli token acme admin@acme.test
+$corpus = "C:\Users\you\Documents\corpus"
+$body = @{ directory = $corpus; labels = @("public") } | ConvertTo-Json
+$job = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/v1/jobs/ingest" `
+  -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" -Body $body
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/jobs/$($job.id)" -Headers @{ Authorization = "Bearer $token" }
+```
+
+Job state lives in Postgres, not Redis — a job record names a tenant's documents, so it is
+tenant data and gets the same RLS protection as everything else
+([ADR 0003](docs/adr/0003-arq-for-background-ingestion.md)).
+
+**A killed job resumes by re-running.** There is no checkpoint: idempotent ingestion means
+every file already done is skipped by content hash, so "resume" and "retry" are the same
+operation. Each file commits on its own, so one unreadable document at file 499 does not
+discard 498 files of paid embedding work.
+
+The CLI path still works and is often more convenient locally:
+
+```powershell
+uv run python -m app.cli ingest ../sample-docs --tenant acme --labels public
+```
+
 ## Running alongside other Docker projects
 
 Docker isolates Compose projects automatically — each gets its own network, volumes, and

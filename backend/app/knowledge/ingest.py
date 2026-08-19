@@ -65,7 +65,7 @@ def ingest_directory(
     result = IngestResult()
     for path in sorted(directory.rglob("*")):
         if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES:
-            _ingest_file(
+            ingest_file(
                 session,
                 path=path,
                 tenant_id=tenant_id,
@@ -76,7 +76,7 @@ def ingest_directory(
     return result
 
 
-def _ingest_file(
+def ingest_file(
     session: Session,
     *,
     path: Path,
