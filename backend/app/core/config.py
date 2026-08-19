@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     postgres_host: str
     postgres_port: int
 
+    # The role the application connects as at runtime. It is NOT a superuser, which
+    # is what makes Row-Level Security apply to it — PostgreSQL exempts superusers
+    # from RLS unconditionally, so connecting as the owner would silently disable
+    # every tenant isolation policy in the database.
+    postgres_app_password: str
+
     # Used by the Phase 4 SQL tool. Required now so the credential exists
     # before the code that needs it, and is never invented in a hurry later.
     postgres_readonly_password: str
@@ -51,12 +57,31 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
-        """Full-privilege application connection string (Alembic, app writes)."""
+        """Owner connection string. Migrations only — this role bypasses RLS."""
         return str(
             PostgresDsn.build(
                 scheme="postgresql+psycopg",
                 username=self.postgres_user,
                 password=self.postgres_password,
+                host=self.postgres_host,
+                port=self.postgres_port,
+                path=self.postgres_db,
+            )
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def app_database_url(self) -> str:
+        """Runtime connection string. Non-superuser, so RLS policies apply to it.
+
+        Every request-path query uses this. Using `database_url` at runtime would
+        silently disable tenant isolation.
+        """
+        return str(
+            PostgresDsn.build(
+                scheme="postgresql+psycopg",
+                username="app_rw",
+                password=self.postgres_app_password,
                 host=self.postgres_host,
                 port=self.postgres_port,
                 path=self.postgres_db,

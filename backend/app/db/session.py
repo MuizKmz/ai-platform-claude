@@ -16,8 +16,11 @@ from app.core.config import settings
 # a hung request instead of a clean 503.
 CONNECT_TIMEOUT_SECONDS = 3
 
+# app_database_url, not database_url. The owner role bypasses RLS unconditionally,
+# so using it at runtime would silently disable every tenant isolation policy.
+# Migrations use the owner; the request path never does.
 engine: Engine = create_engine(
-    settings.database_url,
+    settings.app_database_url,
     # Verify a pooled connection is alive before handing it out. Without this,
     # a connection dropped by a container restart surfaces as a request error.
     pool_pre_ping=True,

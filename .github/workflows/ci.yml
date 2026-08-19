@@ -12,6 +12,37 @@ jobs:
       run:
         working-directory: backend
 
+    # A real Postgres, so the Row-Level Security tests actually run. Without this
+    # they would skip, and a skipped security test reports green while proving
+    # nothing — the exact failure mode roadmap rule #3 exists to prevent.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: eaip
+          POSTGRES_PASSWORD: ci-owner-password
+          POSTGRES_DB: eaip
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      APP_ENV: test
+      LOG_LEVEL: WARNING
+      POSTGRES_USER: eaip
+      POSTGRES_PASSWORD: ci-owner-password
+      POSTGRES_DB: eaip
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_APP_PASSWORD: ci-app-password
+      POSTGRES_READONLY_PASSWORD: ci-readonly-password
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+
     steps:
       - uses: actions/checkout@v4
 
@@ -37,5 +68,19 @@ jobs:
       - name: Type check
         run: uv run mypy app
 
+      - name: Create the read-only role
+        # Phase 0 creates this in infra/postgres/init.sh, which the CI service
+        # container does not run. The migration grants to it, so it must exist.
+        run: |
+          PGPASSWORD=ci-owner-password psql -h localhost -U eaip -d eaip             -c "CREATE ROLE app_readonly LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'ci-readonly-password'"
+
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
       - name: Test
         run: uv run pytest -q
+
+      - name: Security suite must not be empty
+        # A skipped security test is worse than a failing one: it reports green.
+        # --strict-markers plus an explicit count makes the skip impossible to miss.
+        run: uv run pytest -m security -q --no-header | tee /dev/stderr | grep -qE "[0-9]+ passed"

@@ -11,6 +11,8 @@ config = context.config
 # Security invariant #5: the connection URL comes from the environment, never
 # from alembic.ini — an ini file gets committed, and a password with it.
 from app.core.config import settings  # noqa: E402
+from app.db import models  # noqa: E402,F401  (import registers every table on Base.metadata)
+from app.db.base import Base  # noqa: E402
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
@@ -23,7 +25,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
