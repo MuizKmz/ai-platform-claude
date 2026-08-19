@@ -90,8 +90,13 @@ POSTGRES_PORT=5432
 POSTGRES_READONLY_PASSWORD=change-me-too
 
 REDIS_HOST=localhost
-REDIS_PORT=6379
+REDIS_PORT=6380
 ```
+
+> **Redis port 6380, not 6379.** This machine runs Memurai (a Redis-compatible
+> Windows service) natively on 6379. Mapping the container to 6380 lets both coexist,
+> so you never have to stop a service to start the project. On a machine without
+> Memurai, 6379 is fine.
 
 > These are local-only credentials. Real environments get real secrets from a secret
 > manager — never from a file. `.env` is gitignored and must stay that way.
