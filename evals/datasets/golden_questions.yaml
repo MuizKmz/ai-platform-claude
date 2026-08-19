@@ -1,0 +1,48 @@
+# Golden set for retrieval evaluation.
+#
+# Questions are deliberately phrased the way a person would ask them, NOT using
+# the words in the document. A question that repeats the answer's vocabulary
+# measures keyword matching, not retrieval.
+#
+# `expects` is the heading of the section that should be retrieved.
+
+- question: How long until I get my money back?
+  expects: Refund Policy
+- question: What is the deadline for asking to return something?
+  expects: Refund Policy
+- question: Do I have to pay for delivery?
+  expects: Shipping
+- question: How fast can I get my order if I pay extra?
+  expects: Shipping
+- question: What happens if my laptop breaks by itself?
+  expects: Warranty
+- question: Is dropping my device covered?
+  expects: Warranty
+- question: How long do you keep my information after I leave?
+  expects: Data Retention
+- question: When are old backups destroyed?
+  expects: Data Retention
+- question: Who can see internal systems?
+  expects: Access Control
+- question: How quickly is access removed when someone quits?
+  expects: Access Control
+- question: How long does my passphrase need to be?
+  expects: Password Requirements
+- question: Do I need a second factor to sign in?
+  expects: Password Requirements
+- question: How fast do you react to a security problem?
+  expects: Incident Response
+- question: When will I hear about a data breach?
+  expects: Incident Response
+- question: How much time off do I get each year?
+  expects: Vacation Policy
+- question: Can I carry unused leave into next year?
+  expects: Vacation Policy
+- question: Do I need permission before buying something small?
+  expects: Expense Claims
+- question: How long do I have to file a receipt?
+  expects: Expense Claims
+- question: Can I work from home?
+  expects: Remote Work
+- question: What if I never want to come to the office?
+  expects: Remote Work

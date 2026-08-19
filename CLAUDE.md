@@ -6,8 +6,11 @@ not current state. This file is current state.
 
 ## Current phase
 
-**Phase 0 — Foundation.** Repo, toolchain, Postgres+pgvector, Redis, `/health`, CI.
-There is no LLM, no retrieval, no connector, and no frontend yet. Do not add them.
+**Phase 1 complete — tenant-scoped retrieval.** Schema with RLS, JWT identity,
+ingestion, and `GET /v1/search` filtered by tenant and labels before ranking.
+
+There is still **no LLM in any request path**, no connector, and no frontend. Do not add
+them. Phase 2 adds grounded generation with citations — that is when an LLM arrives.
 See [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for what each phase unlocks.
 
 ## How to run

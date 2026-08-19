@@ -12,7 +12,7 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | Phase | State |
 |---|---|
 | **0 — Foundation** | ✅ Complete. Repo, pinned toolchain, Postgres 17 + pgvector 0.8.6, Redis, real `/health`, green CI |
-| **1 — Tenant-scoped retrieval** | 🚧 In progress (stages 1–3 of 4: schema + RLS, JWT identity, ingestion) |
+| **1 — Tenant-scoped retrieval** | ✅ Complete. Schema + RLS, JWT identity, ingestion, authorization-filtered search |
 
 **No LLM, no retrieval endpoint, no connectors, no frontend yet.** That is deliberate — see
 the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
@@ -35,6 +35,13 @@ These are tested on every push, not aspirations:
   be replayed here.
 - Every authentication failure returns the same opaque 401 — the reason is logged
   server-side, never returned, so the endpoint is not a debugging oracle for an attacker.
+- **Retrieval is authorization-filtered before ranking**, in the `WHERE` clause. Post-filtering
+  would break top-k (ask for 5, get 2, with nothing saying why) and would mean the rows had
+  already left the database — "retrieved then hidden" is not "not retrieved".
+- A document with no labels is visible to **nobody**, and a user with no labels sees
+  **nothing**. Default-deny in both directions.
+- Traces record counts and lengths only — never query text or chunk content. A span table is
+  a second copy of tenant data that nobody thinks to review.
 
 Run them yourself: `cd backend && uv run pytest -m security -v`
 
@@ -265,6 +272,40 @@ number, not an error), so the only defence is knowing which rows came from where
 
 **Tests never call OpenAI.** `FakeEmbeddings` is deterministic and offline, so the suite
 costs nothing, needs no API key, and cannot flake on a network hiccup.
+
+## Searching
+
+```powershell
+cd backend
+$token = uv run python -m app.cli token acme alice@acme.test
+curl -H "Authorization: Bearer $token" "http://127.0.0.1:8000/v1/search?q=how+long+for+a+refund"
+```
+
+There is **no tenant parameter** on this endpoint, and no way to add one. Tenancy and
+permitted labels come from the token; supplying either as a query parameter or header
+changes nothing.
+
+The response echoes `filtered_by` — the caller's own tenant and labels, which they already
+hold in their token. It never describes what was filtered *away*: that would leak the
+existence of data they may not see. Every search returns a `trace_id`, and a matching row
+lands in `trace_span`.
+
+### Retrieval quality baseline
+
+**Recall@5 = 1.00 (20/20)** on the golden set, against a 0.80 target.
+
+The 20 questions are deliberately phrased in different words from the documents — "How long
+until I get my money back?" must retrieve a section that never says "money back". A question
+reusing the answer's vocabulary would measure keyword matching rather than retrieval.
+
+```powershell
+cd backend
+uv run python ../evals/run_recall.py   # needs OPENAI_API_KEY; costs a few cents
+```
+
+This is a script rather than a CI test on purpose: it uses real embeddings, so it costs
+money and needs a key. The deterministic fake used in tests cannot measure semantic quality
+by construction.
 
 ## Running alongside other Docker projects
 
