@@ -16,6 +16,7 @@ dependencies = [
     "redis>=5.2,<6.0",
     "alembic>=1.14,<2.0",
     "pgvector>=0.3,<1.0",
+    "pyjwt[crypto]>=2.9,<3.0",
 ]
 
 [dependency-groups]

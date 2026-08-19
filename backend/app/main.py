@@ -9,6 +9,7 @@ import logging
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.api.v1.me import router as me_router
 from app.core.config import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -20,3 +21,4 @@ app = FastAPI(
 )
 
 app.include_router(health_router)
+app.include_router(me_router)

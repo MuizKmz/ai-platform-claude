@@ -29,6 +29,15 @@ engine: Engine = create_engine(
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
+# Owner connection: bypasses RLS. Reserved for administrative work that is
+# legitimately outside any one tenant's context — creating tenants, migrations,
+# and test fixtures. It must never serve a request.
+owner_engine: Engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+    connect_args={"connect_timeout": CONNECT_TIMEOUT_SECONDS},
+)
+
 redis_client: redis.Redis = redis.Redis.from_url(
     settings.redis_url,
     decode_responses=True,

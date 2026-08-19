@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     redis_host: str
     redis_port: int
 
+    # --- Identity ---------------------------------------------------------
+    # Signing key for locally-issued development tokens. Required with no default:
+    # a default would mean every deployment that forgot to set it shares one key,
+    # and anyone who read the source could mint a valid token for any tenant.
+    jwt_secret: str
+    jwt_issuer: str = "https://eaip.local"
+    jwt_audience: str = "eaip-api"
+    jwt_ttl_minutes: int = 60
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:

@@ -12,7 +12,7 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | Phase | State |
 |---|---|
 | **0 — Foundation** | ✅ Complete. Repo, pinned toolchain, Postgres 17 + pgvector 0.8.6, Redis, real `/health`, green CI |
-| **1 — Tenant-scoped retrieval** | 🚧 In progress (stage 1 of 4: schema + Row-Level Security done) |
+| **1 — Tenant-scoped retrieval** | 🚧 In progress (stages 1–2 of 4: schema + RLS, JWT identity) |
 
 **No LLM, no retrieval endpoint, no connectors, no frontend yet.** That is deliberate — see
 the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
@@ -28,6 +28,13 @@ These are tested on every push, not aspirations:
   RLS unconditionally, so this property is what the whole guarantee rests on; a test asserts
   it, because every other isolation test still passes while isolation is silently gone.
 - Generated SQL will use a read-only role enforced by Postgres, not by string inspection.
+- **Tenancy is server-derived.** `tenant_id` comes from a verified token signature. A
+  request supplying its own `tenant_id` in a body, query parameter, or header is ignored.
+- Token verification pins the algorithm, so an `alg=none` token is rejected rather than
+  trusted; issuer and audience are checked so a token minted for another service cannot
+  be replayed here.
+- Every authentication failure returns the same opaque 401 — the reason is logged
+  server-side, never returned, so the endpoint is not a debugging oracle for an attacker.
 
 Run them yourself: `cd backend && uv run pytest -m security -v`
 
@@ -203,6 +210,35 @@ uv add <package>                       # add a dependency (needs an ADR)
 | `vector` extension missing | Volume predates `init.sh` | `docker compose down -v; docker compose up -d` (destroys data) |
 
 ---
+
+## Authentication (development)
+
+There is no identity provider yet. Tokens are minted locally by the CLI, with
+OIDC-shaped claims so a real IdP can replace the issuer later without changing the
+verification path or the `Principal`.
+
+```powershell
+cd backend
+
+# One-time setup
+uv run alembic upgrade head
+uv run python -m app.cli create-tenant acme "Acme Corp"
+uv run python -m app.cli create-user acme alice@acme.test --roles reader --labels public,finance
+
+# Mint a token (claims are read from the database, never from the command line)
+uv run python -m app.cli token acme alice@acme.test
+```
+
+Then call the API with it:
+
+```powershell
+$token = uv run python -m app.cli token acme alice@acme.test
+curl -H "Authorization: Bearer $token" http://127.0.0.1:8000/v1/me
+```
+
+`/v1/me` echoes the verified identity. Try supplying a different `tenant_id` as a
+query parameter or header — the response will not change. Tenancy comes from the
+token's signature, not from anything a caller can set.
 
 ## Running alongside other Docker projects
 

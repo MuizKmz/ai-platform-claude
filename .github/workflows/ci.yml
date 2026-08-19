@@ -52,6 +52,12 @@ jobs:
       POSTGRES_READONLY_PASSWORD: ci-readonly-password
       REDIS_HOST: localhost
       REDIS_PORT: 6379
+      # Not a real secret: CI mints and verifies its own tokens within the job.
+      # A production key comes from a secret manager and never from a workflow file.
+      JWT_SECRET: ci-only-signing-key-not-used-anywhere-else
+      JWT_ISSUER: https://eaip.local
+      JWT_AUDIENCE: eaip-api
+      JWT_TTL_MINUTES: 60
 
     steps:
       - uses: actions/checkout@v6
