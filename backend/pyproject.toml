@@ -23,6 +23,7 @@ dependencies = [
     "beautifulsoup4>=4.12,<5.0",
     "lxml>=5.3,<7.0",
     "arq>=0.26,<1.0",
+    "sqlglot>=25.0,<28.0",
 ]
 
 [dependency-groups]
