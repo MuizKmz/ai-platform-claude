@@ -11,11 +11,15 @@ can be exercised by hand. Ingestion arrives in stage 3.
 import argparse
 import sys
 import uuid
+from pathlib import Path
 
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.security import issue_token
 from app.db.session import owner_engine
+from app.knowledge.embedding import EmbeddingError, get_embedding_provider
+from app.knowledge.ingest import ingest_directory
 
 
 def _create_tenant(slug: str, name: str) -> None:
@@ -92,6 +96,43 @@ def _token(tenant_slug: str, email: str) -> None:
     )
 
 
+def _ingest(directory: str, tenant_slug: str, labels: list[str]) -> None:
+    """Ingest a directory for one tenant.
+
+    Everything happens in one transaction: a failure part-way through leaves no
+    half-ingested document, which is what makes re-running safe.
+    """
+    try:
+        provider = get_embedding_provider()
+    except EmbeddingError as exc:
+        sys.exit(str(exc))
+
+    with Session(owner_engine) as session, session.begin():
+        tenant_id = session.execute(
+            text("SELECT id FROM tenant WHERE slug = :slug"), {"slug": tenant_slug}
+        ).scalar()
+        if not tenant_id:
+            sys.exit(f"no such tenant: {tenant_slug}")
+
+        if not labels:
+            # Default-deny: an unlabelled document is visible to nobody, so
+            # ingesting without labels is almost always a mistake worth stopping on.
+            sys.exit("--labels is required; a document with no labels is visible to nobody")
+
+        try:
+            result = ingest_directory(
+                session,
+                directory=Path(directory),
+                tenant_id=tenant_id,
+                labels=labels,
+                provider=provider,
+            )
+        except EmbeddingError as exc:
+            sys.exit(f"ingestion failed: {exc}")
+
+    print(f"{result} (model: {provider.model})")
+
+
 def _split_csv(value: str) -> list[str]:
     """Parse a comma-separated option, dropping empties and surrounding space."""
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -115,6 +156,11 @@ def main() -> None:
     p.add_argument("tenant_slug")
     p.add_argument("email")
 
+    p = sub.add_parser("ingest")
+    p.add_argument("directory")
+    p.add_argument("--tenant", required=True)
+    p.add_argument("--labels", default="", help="comma-separated; required")
+
     args = parser.parse_args()
 
     if args.command == "create-tenant":
@@ -128,6 +174,8 @@ def main() -> None:
         )
     elif args.command == "token":
         _token(args.tenant_slug, args.email)
+    elif args.command == "ingest":
+        _ingest(args.directory, args.tenant, _split_csv(args.labels))
 
 
 if __name__ == "__main__":

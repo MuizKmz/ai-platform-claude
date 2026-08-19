@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     jwt_audience: str = "eaip-api"
     jwt_ttl_minutes: int = 60
 
+    # --- Embeddings -------------------------------------------------------
+    # Optional: tests use a deterministic fake and CI never calls the API, so the
+    # suite must run without a key. Ingestion fails loudly if it is missing.
+    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:

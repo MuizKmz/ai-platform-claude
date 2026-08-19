@@ -32,3 +32,6 @@ desktop.ini
 
 # Local data volumes
 pgdata/
+
+# Local sample corpus for manual ingestion testing
+sample-docs/

@@ -12,7 +12,7 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | Phase | State |
 |---|---|
 | **0 — Foundation** | ✅ Complete. Repo, pinned toolchain, Postgres 17 + pgvector 0.8.6, Redis, real `/health`, green CI |
-| **1 — Tenant-scoped retrieval** | 🚧 In progress (stages 1–2 of 4: schema + RLS, JWT identity) |
+| **1 — Tenant-scoped retrieval** | 🚧 In progress (stages 1–3 of 4: schema + RLS, JWT identity, ingestion) |
 
 **No LLM, no retrieval endpoint, no connectors, no frontend yet.** That is deliberate — see
 the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
@@ -239,6 +239,32 @@ curl -H "Authorization: Bearer $token" http://127.0.0.1:8000/v1/me
 `/v1/me` echoes the verified identity. Try supplying a different `tenant_id` as a
 query parameter or header — the response will not change. Tenancy comes from the
 token's signature, not from anything a caller can set.
+
+## Ingesting documents
+
+Only `.md` and `.txt` for now — PDF parsing arrives in Phase 3.
+
+```powershell
+cd backend
+uv run python -m app.cli ingest ../sample-docs --tenant acme --labels public
+```
+
+`--labels` is required. A document with no labels is visible to nobody (default-deny),
+so ingesting without them is almost always a mistake.
+
+Ingestion is **idempotent by content hash**: re-running over an unchanged corpus creates
+nothing. The hash is of file content, not path, so a renamed or moved file with identical
+bytes is still one document. Duplicates are not merely wasteful — identical chunks crowd
+each other out of the top-k, so a search returns the same answer five times instead of
+five answers.
+
+Embeddings come from OpenAI `text-embedding-3-small`, and every chunk records the model
+and dimension that produced it. A corpus embedded with two different models is silently
+unsearchable (cosine distance between vectors from different models is a meaningless
+number, not an error), so the only defence is knowing which rows came from where.
+
+**Tests never call OpenAI.** `FakeEmbeddings` is deterministic and offline, so the suite
+costs nothing, needs no API key, and cannot flake on a network hiccup.
 
 ## Running alongside other Docker projects
 
