@@ -7,9 +7,16 @@ through a user request.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import PostgresDsn, RedisDsn, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The single .env lives at the repo root, but the app is normally started from
+# backend/. Resolve the path from this file's location so the working directory
+# does not decide whether configuration is found.
+#   config.py -> core -> app -> backend -> <repo root>
+ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
@@ -19,7 +26,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
