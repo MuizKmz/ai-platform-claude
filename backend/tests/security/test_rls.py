@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Connection, Engine, create_engine, text
 
 from app.core.config import settings
 
@@ -65,6 +65,15 @@ def app_engine() -> Iterator[Engine]:
     engine.dispose()
 
 
+def _wipe(conn: Connection) -> None:
+    """Remove only the tenants this module owns."""
+    params = {"a": ACME, "g": GLOBEX}
+    conn.execute(text("DELETE FROM chunk WHERE tenant_id IN (:a, :g)"), params)
+    conn.execute(text("DELETE FROM document WHERE tenant_id IN (:a, :g)"), params)
+    conn.execute(text("DELETE FROM app_user WHERE tenant_id IN (:a, :g)"), params)
+    conn.execute(text("DELETE FROM tenant WHERE id IN (:a, :g)"), params)
+
+
 @pytest.fixture(autouse=True)
 def seed(owner_engine: Engine) -> Iterator[None]:
     """Two tenants, one identically-titled document each.
@@ -73,13 +82,14 @@ def seed(owner_engine: Engine) -> Iterator[None]:
     merely because the text differs.
     """
     with owner_engine.begin() as conn:
-        conn.execute(text("DELETE FROM chunk"))
-        conn.execute(text("DELETE FROM document"))
-        conn.execute(text("DELETE FROM tenant"))
+        # Scoped to this file's own fixture tenants. An unscoped DELETE would
+        # destroy a developer's real data every time the suite runs — a test that
+        # can wipe the database it is testing is not a safe test.
+        _wipe(conn)
         conn.execute(
             text("""
                 INSERT INTO tenant (id, slug, name) VALUES
-                  (:a, 'acme', 'Acme'), (:g, 'globex', 'Globex')
+                  (:a, 'rls-test-a', 'RLS Test A'), (:g, 'rls-test-b', 'RLS Test B')
             """),
             {"a": ACME, "g": GLOBEX},
         )
@@ -94,8 +104,7 @@ def seed(owner_engine: Engine) -> Iterator[None]:
         )
     yield
     with owner_engine.begin() as conn:
-        conn.execute(text("DELETE FROM document"))
-        conn.execute(text("DELETE FROM tenant"))
+        _wipe(conn)
 
 
 def test_rls_blocks_missing_tenant_context(app_engine: Engine) -> None:
