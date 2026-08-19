@@ -6,11 +6,12 @@ not current state. This file is current state.
 
 ## Current phase
 
-**Phase 1 complete — tenant-scoped retrieval.** Schema with RLS, JWT identity,
-ingestion, and `GET /v1/search` filtered by tenant and labels before ranking.
+**Phase 2 complete — grounded generation.** Schema with RLS, JWT identity, ingestion,
+authorization-filtered search, and `POST /v1/chat` returning cited answers with
+server-verified citations, a refusal path, and per-tenant cost accounting.
 
-There is still **no LLM in any request path**, no connector, and no frontend. Do not add
-them. Phase 2 adds grounded generation with citations — that is when an LLM arrives.
+There is still **no agent, no tool calling, no connector, and no frontend**. Do not add
+them. Phase 3 is real ingestion (PDF/DOCX) plus the evaluation harness.
 See [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for what each phase unlocks.
 
 ## How to run

@@ -13,6 +13,7 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 |---|---|
 | **0 — Foundation** | ✅ Complete. Repo, pinned toolchain, Postgres 17 + pgvector 0.8.6, Redis, real `/health`, green CI |
 | **1 — Tenant-scoped retrieval** | ✅ Complete. Schema + RLS, JWT identity, ingestion, authorization-filtered search |
+| **2 — Grounded generation** | ✅ Complete. Cited answers, verified citations, refusal path, per-tenant cost |
 
 **No LLM, no retrieval endpoint, no connectors, no frontend yet.** That is deliberate — see
 the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
@@ -42,6 +43,14 @@ These are tested on every push, not aspirations:
   **nothing**. Default-deny in both directions.
 - Traces record counts and lengths only — never query text or chunk content. A span table is
   a second copy of tenant data that nobody thinks to review.
+- **Retrieved documents are framed as untrusted data**, structurally separated from
+  instructions: the system prompt holds the rules, retrieved chunks go in the user message
+  under `SOURCES`. A document containing "ignore previous instructions" is then text inside
+  a section the model was told is data, not a competing instruction at the same level.
+- **Citations are verified server-side.** Every `[n]` in an answer must resolve to a chunk
+  actually retrieved for that request; the rest are stripped and logged.
+- Provider errors never reach a client — they can carry request content. Timeouts return
+  504, failures 502, both with a fixed message.
 
 Run them yourself: `cd backend && uv run pytest -m security -v`
 
@@ -306,6 +315,43 @@ uv run python ../evals/run_recall.py   # needs OPENAI_API_KEY; costs a few cents
 This is a script rather than a CI test on purpose: it uses real embeddings, so it costs
 money and needs a key. The deterministic fake used in tests cannot measure semantic quality
 by construction.
+
+## Asking questions
+
+```powershell
+cd backend
+$token = uv run python -m app.cli token acme alice@acme.test
+$body = @{ question = "How long does a refund take?" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/v1/chat" `
+  -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" -Body $body
+```
+
+Answers are generated **only** from retrieved chunks, and every citation is verified
+server-side against the chunks actually retrieved for that request. A citation the model
+invented is stripped before the response is sent and the drop is logged — a citation is
+the part of an answer a reader trusts without checking, so an invented one produces
+something that looks verified and is not.
+
+When retrieval finds nothing relevant, the answer is `I don't have enough information to
+answer that.` rather than a guess. If retrieval returns nothing at all, the model is not
+called: generating without sources invites an answer from the model's own knowledge, which
+is what grounding exists to prevent.
+
+Set `"stream": true` for Server-Sent Events. Citations arrive in a final `done` event —
+they cannot be verified until the sentence containing them has finished streaming.
+
+### Cost
+
+Every request records prompt tokens, completion tokens, and USD cost against a tenant and
+user:
+
+```sql
+SELECT t.slug, count(*) AS answers, round(sum(m.cost_usd)::numeric, 4) AS usd
+FROM conversation_message m JOIN tenant t ON t.id = m.tenant_id
+WHERE m.role = 'assistant' GROUP BY t.slug;
+```
+
+Changing the model is a config edit (`LLM_MODEL` in `.env`), never a code change.
 
 ## Running alongside other Docker projects
 

@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
 
+    # --- Generation -------------------------------------------------------
+    # Changing the model is a config edit, never a code change.
+    llm_model: str = "gpt-4.1-mini"
+    llm_timeout_seconds: float = 30.0
+    llm_max_tokens: int = 1024
+    # How many chunks are fed to the model. More context is not free: it costs
+    # tokens, and it dilutes the relevant passage among less relevant ones.
+    rag_top_k: int = 5
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
