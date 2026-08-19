@@ -21,6 +21,10 @@ uv run uvicorn app.main:app --reload
 
 Health check: http://127.0.0.1:8000/health — must report `db: ok` and `redis: ok`.
 
+**Host ports on this machine are deliberately non-default** — Postgres `5433`, Redis `6380`.
+Another project and a native Memurai service hold 5432 and 6379. Container-internal ports
+are unchanged; only the published host port differs. Do not "helpfully" reset these.
+
 ## How to test
 
 ```powershell
@@ -75,4 +79,6 @@ These are not features and are never deferred to "later". Violating one is a blo
 - Add anything from the vision doc's technology table "because it's on the list". Each arrives
   in the phase that needs it, with an ADR.
 - Build write-capable tools, multi-agent systems, or Kubernetes config.
-- Reintroduce `Source Code 2/` — it was a fork; this directory is the only repo root.
+- Touch `../Source Code 2/`. It is a separate project with its own Docker stack, volume,
+  network, and database. It is fully isolated from this one and is none of our business.
+  Do not read it for guidance, copy from it, or stop its containers.

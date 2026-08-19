@@ -85,7 +85,7 @@ POSTGRES_USER=eaip
 POSTGRES_PASSWORD=change-me-locally
 POSTGRES_DB=eaip
 POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+POSTGRES_PORT=5433
 
 POSTGRES_READONLY_PASSWORD=change-me-too
 
@@ -93,6 +93,13 @@ REDIS_HOST=localhost
 REDIS_PORT=6380
 ```
 
+> **Ports 5433 and 6380 are intentional, not typos.** This machine runs another
+> Docker project that publishes 5432, and Memurai (a Redis-compatible Windows service)
+> on 6379. Publishing on 5433/6380 means neither stack has to be stopped for the other,
+> and there is no startup-order race. Inside the containers the ports are still the
+> standard 5432/6379 — only the host mapping differs. On a clean machine, the defaults
+> are fine.
+>
 > **Redis port 6380, not 6379.** This machine runs Memurai (a Redis-compatible
 > Windows service) natively on 6379. Mapping the container to 6380 lets both coexist,
 > so you never have to stop a service to start the project. On a machine without
@@ -171,12 +178,28 @@ uv add <package>                       # add a dependency (needs an ADR)
 |---|---|---|
 | `docker: command not found` | Docker Desktop not installed or not running | Start Docker Desktop; wait for the tray icon to settle |
 | `/health` shows `"db":"error"` | Containers not up, or `.env` mismatched | `docker compose ps`; check `POSTGRES_PORT` matches |
-| `port 5432 already allocated` | A local Postgres is already running | Change `POSTGRES_PORT` in `.env` to `5433` |
+| `port 5432 already allocated` | Another Postgres is running | Already handled — we publish on `5433` |
 | `port 6379 already allocated` | **Memurai is already running on this machine** | Either stop it (`Stop-Service Memurai`) or comment out the `redis` service in `docker-compose.yml` and use Memurai instead — it is Redis-compatible |
 | `ValidationError` on startup | A variable is missing from `.env` | Compare against `.env.example` — every key needs a value |
 | `vector` extension missing | Volume predates `init.sh` | `docker compose down -v; docker compose up -d` (destroys data) |
 
 ---
+
+## Running alongside other Docker projects
+
+Docker isolates Compose projects automatically — each gets its own network, volumes, and
+container names. Two stacks only ever collide over **published host ports**.
+
+This project therefore publishes deliberately non-default ports (`5433`, `6380`) so it can
+coexist with anything else on the machine. To check what is taking a port:
+
+```powershell
+docker ps --format "table {{.Names}}	{{.Ports}}"
+netstat -ano | findstr :5432
+```
+
+If you hit a conflict, change the port in `.env` and run `docker compose up -d` again.
+Your data lives in a named volume and survives the change.
 
 ## Project layout
 
