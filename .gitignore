@@ -35,3 +35,6 @@ pgdata/
 
 # Local sample corpus for manual ingestion testing
 sample-docs/
+
+# Generated test fixtures — rebuilt by tests/fixtures/make_fixtures.py
+backend/tests/fixtures/documents/

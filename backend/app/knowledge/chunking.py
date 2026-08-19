@@ -14,6 +14,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.knowledge.parsers.base import Block as ParserBlock
+
+# Blocks are joined by a blank line, matching how the source separated them.
+NEWLINE_JOIN = "\n\n"
 
 # Characters, not tokens. Tokenisation is model-specific and would couple chunking
 # to the embedding provider; ~4 chars per token is close enough for sizing, and the
@@ -60,6 +67,68 @@ def chunk_text(
     for heading, section in _split_by_heading(text):
         for piece in _split_section(section, chunk_size, overlap):
             chunks.append(Chunk(ordinal=len(chunks), content=piece, heading=heading))
+    return chunks
+
+
+def chunk_blocks(
+    blocks: list[ParserBlock],
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_OVERLAP,
+) -> list[Chunk]:
+    """Chunk parsed blocks, keeping atomic blocks whole.
+
+    This is the path real documents take. `chunk_text` above still serves plain
+    strings, but it cannot know a table from a paragraph — only the parser does,
+    and only if the block types survive to here.
+
+    A table becomes exactly one chunk, even when it exceeds chunk_size. An
+    oversized table is a worse chunk than an oversized paragraph but a far better
+    one than half a table: the header row carries the meaning of every cell below
+    it, so a table split at row 12 leaves rows 13+ as unlabelled numbers.
+    """
+    if overlap >= chunk_size:
+        raise ValueError("overlap must be smaller than chunk_size")
+
+    chunks: list[Chunk] = []
+    pending: list[str] = []
+    pending_heading: str | None = None
+
+    def flush() -> None:
+        nonlocal pending, pending_heading
+        if pending:
+            text = NEWLINE_JOIN.join(pending).strip()
+            if text:
+                chunks.append(Chunk(ordinal=len(chunks), content=text, heading=pending_heading))
+        pending = []
+
+    for block in blocks:
+        # A heading is context for what follows, not content on its own. Emitting
+        # it as its own chunk produces a chunk whose entire body is three words.
+        if block.type.value == "heading":
+            flush()
+            pending_heading = block.text
+            continue
+
+        if block.is_atomic:
+            flush()
+            chunks.append(Chunk(ordinal=len(chunks), content=block.text, heading=block.heading))
+            continue
+
+        if len(block.text) > chunk_size:
+            flush()
+            for piece in _split_section(block.text, chunk_size, overlap):
+                chunks.append(Chunk(ordinal=len(chunks), content=piece, heading=block.heading))
+            continue
+
+        candidate = NEWLINE_JOIN.join([*pending, block.text])
+        if len(candidate) > chunk_size:
+            flush()
+        if not pending:
+            pending_heading = block.heading or pending_heading
+        pending.append(block.text)
+
+    flush()
     return chunks
 
 

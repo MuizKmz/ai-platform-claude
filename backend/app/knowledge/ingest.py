@@ -12,6 +12,7 @@ duplicate chunks crowd out distinct results in the top-k.
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,10 +20,11 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.knowledge.chunking import chunk_text
+from app.knowledge.chunking import chunk_blocks
 from app.knowledge.embedding import EmbeddingProvider
+from app.knowledge.parsers import SUPPORTED_SUFFIXES, ParseError, parse_document
 
-SUPPORTED_SUFFIXES = {".md", ".txt"}
+logger = logging.getLogger(__name__)
 
 # One request per batch rather than per chunk. Also bounds the failure blast radius:
 # a rejected batch loses 64 chunks of work, not a whole corpus.
@@ -78,10 +80,18 @@ def _ingest_file(
     provider: EmbeddingProvider,
     result: IngestResult,
 ) -> None:
-    body = path.read_text(encoding="utf-8", errors="replace")
-    # Hash the content, not the path: a renamed or moved file with identical bytes
-    # is the same document and must not be ingested twice.
-    content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    try:
+        parsed = parse_document(path)
+    except ParseError:
+        # A document we cannot read is skipped rather than aborting the run — one
+        # scanned PDF in a folder of 500 should not block the other 499.
+        logger.warning("skipping unreadable document: %s", path.name)
+        result.documents_skipped += 1
+        return
+
+    # Hash the extracted text, not the raw bytes: the same content re-saved by a
+    # different tool produces different bytes and the same document.
+    content_hash = hashlib.sha256(parsed.text.encode("utf-8")).hexdigest()
 
     existing = session.execute(
         text("SELECT id FROM document WHERE tenant_id = :t AND content_hash = :h"),
@@ -91,7 +101,7 @@ def _ingest_file(
         result.documents_skipped += 1
         return
 
-    chunks = chunk_text(body)
+    chunks = chunk_blocks(parsed.blocks)
     if not chunks:
         result.documents_skipped += 1
         return
@@ -105,7 +115,7 @@ def _ingest_file(
         {
             "id": uuid.uuid4(),
             "t": tenant_id,
-            "title": path.stem,
+            "title": parsed.title or path.stem,
             "src": str(path),
             "hash": content_hash,
             "labels": labels,

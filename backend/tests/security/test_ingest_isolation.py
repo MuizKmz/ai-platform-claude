@@ -81,7 +81,9 @@ def clean(engine: Engine) -> Iterator[None]:
 def corpus(tmp_path: Path) -> Path:
     (tmp_path / "refunds.md").write_text(SHARED_TEXT, encoding="utf-8")
     (tmp_path / "shipping.md").write_text("# Shipping\n\nShipping is free.\n", encoding="utf-8")
-    (tmp_path / "ignored.pdf").write_bytes(b"%PDF-1.4 not supported yet")
+    # Not a valid PDF. PDF *is* a supported format now, so this exercises the
+    # skip-and-continue path: one unreadable file must not abort the run.
+    (tmp_path / "corrupt.pdf").write_bytes(b"%PDF-1.4 truncated garbage")
     return tmp_path
 
 
@@ -112,7 +114,8 @@ def _count(engine: Engine, table: str, tenant_id: uuid.UUID) -> int:
 def test_ingest_creates_documents_and_chunks(engine: Engine, corpus: Path) -> None:
     result = _ingest(engine, corpus, TENANT_A, ["public"])
 
-    assert result.documents_created == 2, "only .md and .txt should be ingested"
+    assert result.documents_created == 2, "both readable documents should ingest"
+    assert result.documents_skipped == 1, "the corrupt PDF should be skipped, not fatal"
     assert result.chunks_created >= 2
     assert _count(engine, "document", TENANT_A) == 2
 
@@ -129,7 +132,8 @@ def test_ingest_is_idempotent(engine: Engine, corpus: Path) -> None:
     second = _ingest(engine, corpus, TENANT_A, ["public"])
 
     assert second.documents_created == 0
-    assert second.documents_skipped == first.documents_created
+    # Everything readable is now unchanged; the corrupt file is skipped either way.
+    assert second.documents_skipped >= first.documents_created
     assert _count(engine, "chunk", TENANT_A) == chunks_after_first
 
 
