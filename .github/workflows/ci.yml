@@ -30,6 +30,16 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       APP_ENV: test
       LOG_LEVEL: WARNING
@@ -44,10 +54,10 @@ jobs:
       REDIS_PORT: 6379
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
@@ -69,10 +79,12 @@ jobs:
         run: uv run mypy app
 
       - name: Create the read-only role
-        # Phase 0 creates this in infra/postgres/init.sh, which the CI service
-        # container does not run. The migration grants to it, so it must exist.
+        # Phase 0 creates this in infra/postgres/init.sh, which a CI service
+        # container never runs. The migration grants to it, so it must exist first.
+        env:
+          PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
         run: |
-          PGPASSWORD=ci-owner-password psql -h localhost -U eaip -d eaip             -c "CREATE ROLE app_readonly LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'ci-readonly-password'"
+          psql -h localhost -p 5432 -U eaip -d eaip             -c "CREATE ROLE app_readonly LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'ci-readonly-password'"
 
       - name: Apply migrations
         run: uv run alembic upgrade head
@@ -80,7 +92,19 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
-      - name: Security suite must not be empty
-        # A skipped security test is worse than a failing one: it reports green.
-        # --strict-markers plus an explicit count makes the skip impossible to miss.
-        run: uv run pytest -m security -q --no-header | tee /dev/stderr | grep -qE "[0-9]+ passed"
+      - name: Security suite must actually run
+        # A skipped security test is worse than a failing one: it reports green
+        # while proving nothing. -p no:randomly keeps output stable; the explicit
+        # "0 skipped" assertion is what catches a database that never connected.
+        run: |
+          uv run pytest -m security -q --no-header > result.txt 2>&1 || {
+            cat result.txt; exit 1;
+          }
+          cat result.txt
+          if grep -qE "[0-9]+ skipped" result.txt; then
+            echo "::error::Security tests were SKIPPED. They must run in CI."
+            exit 1
+          fi
+          grep -qE "[0-9]+ passed" result.txt || {
+            echo "::error::Security suite reported no passing tests."; exit 1;
+          }

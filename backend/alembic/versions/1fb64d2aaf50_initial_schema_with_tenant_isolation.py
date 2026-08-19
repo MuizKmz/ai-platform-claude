@@ -127,16 +127,22 @@ def upgrade() -> None:
     # because this is the single property the whole isolation guarantee rests on.
     # Password comes from the environment, never from this file — a migration is
     # committed to git, and a literal here would be a secret in version control.
-    # Quoted with SQL's own literal quoting rather than string formatting.
+    # Quoted by Postgres itself rather than by string formatting.
+    #
+    # ALTER after CREATE is deliberate. Roles are CLUSTER-wide, not per-database, so
+    # on a cluster where app_rw already exists (a second database, a re-created dev
+    # DB) a bare CREATE ... IF NOT EXISTS would leave the old password in place and
+    # every connection would fail authentication. Setting it unconditionally makes
+    # the migration idempotent in the way that actually matters.
     conn = op.get_bind()
-    exists = conn.execute(
-        sa.text("SELECT 1 FROM pg_roles WHERE rolname = 'app_rw'")
+    quoted_pw = conn.execute(
+        sa.text("SELECT quote_literal(:pw)"), {"pw": settings.postgres_app_password}
     ).scalar()
+    exists = conn.execute(sa.text("SELECT 1 FROM pg_roles WHERE rolname = 'app_rw'")).scalar()
     if not exists:
-        quoted = conn.execute(
-            sa.text("SELECT quote_literal(:pw)"), {"pw": settings.postgres_app_password}
-        ).scalar()
-        op.execute(f"CREATE ROLE app_rw LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD {quoted}")
+        op.execute(f"CREATE ROLE app_rw LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD {quoted_pw}")
+    else:
+        op.execute(f"ALTER ROLE app_rw LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD {quoted_pw}")
 
     op.execute("GRANT USAGE ON SCHEMA public TO app_rw")
     op.execute(
