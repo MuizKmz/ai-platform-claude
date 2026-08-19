@@ -25,8 +25,20 @@ _RESERVED_SLUGS = {"acme", "globex", "test", "demo", "default"}
 _SLUG_LITERAL = re.compile(r"INSERT INTO tenant.*?'([a-z0-9-]+)'", re.IGNORECASE | re.DOTALL)
 
 
+# Files whose whole purpose is to assert that dangerous SQL is REFUSED. They
+# necessarily contain the statements they are proving cannot run, and every one
+# sits inside a pytest.raises. Exempting them by name keeps the guard meaningful
+# elsewhere; a blanket "ignore anything in a raises block" would be easy to
+# accidentally satisfy.
+_ATTACK_STRING_FILES = frozenset({"test_sql_safety.py"})
+
+
 def _test_files() -> list[Path]:
     return [p for p in TESTS_DIR.rglob("*.py") if p.name != Path(__file__).name]
+
+
+def _files_that_must_not_mutate() -> list[Path]:
+    return [p for p in _test_files() if p.name not in _ATTACK_STRING_FILES]
 
 
 def test_no_test_issues_an_unscoped_delete() -> None:
@@ -37,7 +49,7 @@ def test_no_test_issues_an_unscoped_delete() -> None:
     """
     offenders: list[str] = []
 
-    for path in _test_files():
+    for path in _files_that_must_not_mutate():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             match = _UNSCOPED_DELETE.search(line)
             if match and match.group(1).lower() in _TENANT_TABLES:
@@ -61,10 +73,15 @@ def test_fixture_slugs_do_not_collide_with_real_ones() -> None:
 
 
 def test_no_test_truncates_or_drops() -> None:
-    """TRUNCATE and DROP have no safe scoped form here; they must not appear."""
+    """TRUNCATE and DROP have no safe scoped form here; they must not appear.
+
+    Exempt: files whose purpose is proving such statements are REFUSED. They
+    contain the statements as attack strings inside pytest.raises, never as work
+    the suite performs.
+    """
     offenders: list[str] = []
 
-    for path in _test_files():
+    for path in _files_that_must_not_mutate():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if re.search(r"\b(TRUNCATE|DROP\s+TABLE|DROP\s+DATABASE)\b", line, re.IGNORECASE):
                 offenders.append(f"{path.relative_to(TESTS_DIR)}:{lineno}: {line.strip()}")
