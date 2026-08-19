@@ -51,6 +51,12 @@ These are tested on every push, not aspirations:
   actually retrieved for that request; the rest are stripped and logged.
 - Provider errors never reach a client — they can carry request content. Timeouts return
   504, failures 502, both with a fixed message.
+- **Listing is label-filtered too.** A user without the `finance` label does not learn that
+  a finance document exists; a listing endpoint is an easy place to disclose the existence
+  of data whose contents are protected everywhere else.
+- Deleting a document a caller cannot see returns **404, not 403** — a 403 would confirm it
+  exists. Deletion additionally requires the `admin` role: being able to read a document
+  must not imply the authority to destroy it for everyone.
 
 Run them yourself: `cd backend && uv run pytest -m security -v`
 
@@ -352,6 +358,39 @@ WHERE m.role = 'assistant' GROUP BY t.slug;
 ```
 
 Changing the model is a config edit (`LLM_MODEL` in `.env`), never a code change.
+
+## Managing documents
+
+```powershell
+$token = uv run python -m app.cli token acme alice@acme.test
+
+# List what you may see — filtered by your labels, not just your tenant
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/documents" -Headers @{ Authorization = "Bearer $token" }
+
+# Delete (requires the admin role)
+Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:8000/v1/documents/<id>" -Headers @{ Authorization = "Bearer $token" }
+```
+
+**Editing a file supersedes it.** Re-ingesting a changed document writes a new version
+and tombstones the old one: the old row is retained so a citation issued last week still
+resolves to the text that was actually cited, but it is excluded from retrieval so nobody
+is answered from a stale revision.
+
+**Deletion is immediate and complete** — chunks go in the same transaction, and the
+document is unretrievable straight away. That is verified by a search in the test suite,
+not by inspecting a table: "deleted but still answering" is a retention breach with a
+paper trail saying it was deleted.
+
+### Re-indexing after a model change
+
+```powershell
+uv run python -m app.cli reindex acme
+```
+
+Needed after changing `EMBEDDING_MODEL`. A corpus embedded with two models is silently
+unsearchable — cosine distance between vectors from different models is a meaningless
+number, not an error. Re-indexing touches vectors only; **labels are never modified**,
+since a reindex that reset them would quietly widen who can see a document.
 
 ## Running alongside other Docker projects
 

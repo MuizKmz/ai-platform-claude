@@ -20,6 +20,7 @@ from app.core.security import issue_token
 from app.db.session import owner_engine
 from app.knowledge.embedding import EmbeddingError, get_embedding_provider
 from app.knowledge.ingest import ingest_directory
+from app.knowledge.lifecycle import reindex_document
 
 
 def _create_tenant(slug: str, name: str) -> None:
@@ -133,6 +134,46 @@ def _ingest(directory: str, tenant_slug: str, labels: list[str]) -> None:
     print(f"{result} (model: {provider.model})")
 
 
+def _reindex(tenant_slug: str) -> None:
+    """Re-embed every live document for a tenant with the current provider.
+
+    Needed after changing EMBEDDING_MODEL: a corpus embedded with two models is
+    unsearchable, because cosine distance between vectors from different models
+    is a meaningless number rather than an error.
+    """
+    try:
+        provider = get_embedding_provider()
+    except EmbeddingError as exc:
+        sys.exit(str(exc))
+
+    with Session(owner_engine) as session, session.begin():
+        tenant_id = session.execute(
+            text("SELECT id FROM tenant WHERE slug = :slug"), {"slug": tenant_slug}
+        ).scalar()
+        if not tenant_id:
+            sys.exit(f"no such tenant: {tenant_slug}")
+
+        document_ids = list(
+            session.execute(
+                text("""
+                    SELECT id FROM document
+                    WHERE tenant_id = :t AND superseded_at IS NULL
+                """),
+                {"t": tenant_id},
+            ).scalars()
+        )
+
+        documents = chunks = 0
+        for document_id in document_ids:
+            result = reindex_document(
+                session, tenant_id=tenant_id, document_id=document_id, provider=provider
+            )
+            documents += result.documents_reindexed
+            chunks += result.chunks_reembedded
+
+    print(f"{documents} document(s) reindexed, {chunks} chunk(s) re-embedded ({provider.model})")
+
+
 def _split_csv(value: str) -> list[str]:
     """Parse a comma-separated option, dropping empties and surrounding space."""
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -156,6 +197,9 @@ def main() -> None:
     p.add_argument("tenant_slug")
     p.add_argument("email")
 
+    p = sub.add_parser("reindex")
+    p.add_argument("tenant_slug")
+
     p = sub.add_parser("ingest")
     p.add_argument("directory")
     p.add_argument("--tenant", required=True)
@@ -174,6 +218,8 @@ def main() -> None:
         )
     elif args.command == "token":
         _token(args.tenant_slug, args.email)
+    elif args.command == "reindex":
+        _reindex(args.tenant_slug)
     elif args.command == "ingest":
         _ingest(args.directory, args.tenant, _split_csv(args.labels))
 

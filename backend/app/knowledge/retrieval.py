@@ -71,6 +71,11 @@ def search(
     # caller holds. A document with no labels overlaps nothing and is therefore
     # invisible to everyone, which is the default-deny the roadmap requires.
     #
+    # superseded_at IS NULL excludes tombstoned revisions. It sits in the same
+    # WHERE clause as the authorization predicates for the same reason: filtering
+    # after the fact would mean a stale revision was retrieved, and a stale answer
+    # is as wrong as an unauthorized one.
+    #
     # <=> is pgvector's cosine distance, and the HNSW index is built for it.
     # Distance is 0 (identical) to 2 (opposite), so score = 1 - distance gives the
     # more familiar 1 (identical) to -1 ordering.
@@ -87,6 +92,7 @@ def search(
             JOIN document d ON d.id = c.document_id
             WHERE c.tenant_id = :tenant_id
               AND d.tenant_id = :tenant_id
+              AND d.superseded_at IS NULL
               AND d.labels && CAST(:labels AS varchar[])
             ORDER BY c.embedding <=> CAST(:embedding AS vector)
             LIMIT :limit

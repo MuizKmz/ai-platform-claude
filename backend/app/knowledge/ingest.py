@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.knowledge.chunking import chunk_blocks
 from app.knowledge.embedding import EmbeddingProvider
+from app.knowledge.lifecycle import find_live_by_source, supersede_document
 from app.knowledge.parsers import SUPPORTED_SUFFIXES, ParseError, parse_document
 
 logger = logging.getLogger(__name__)
@@ -35,14 +36,18 @@ EMBED_BATCH_SIZE = 64
 class IngestResult:
     documents_created: int = 0
     documents_skipped: int = 0
+    documents_superseded: int = 0
     chunks_created: int = 0
 
     def __str__(self) -> str:
-        return (
-            f"{self.documents_created} document(s) ingested, "
-            f"{self.documents_skipped} unchanged, "
-            f"{self.chunks_created} chunk(s) created"
-        )
+        parts = [
+            f"{self.documents_created} document(s) ingested",
+            f"{self.documents_skipped} unchanged",
+        ]
+        if self.documents_superseded:
+            parts.append(f"{self.documents_superseded} superseded")
+        parts.append(f"{self.chunks_created} chunk(s) created")
+        return ", ".join(parts)
 
 
 def ingest_directory(
@@ -93,13 +98,22 @@ def _ingest_file(
     # different tool produces different bytes and the same document.
     content_hash = hashlib.sha256(parsed.text.encode("utf-8")).hexdigest()
 
+    # Identical content already live: nothing to do.
     existing = session.execute(
-        text("SELECT id FROM document WHERE tenant_id = :t AND content_hash = :h"),
+        text("""
+            SELECT id FROM document
+            WHERE tenant_id = :t AND content_hash = :h AND superseded_at IS NULL
+        """),
         {"t": tenant_id, "h": content_hash},
     ).scalar()
     if existing:
         result.documents_skipped += 1
         return
+
+    # Same path, different content: this is an edit, so the previous revision is
+    # tombstoned once the new one is written. A file identifies a document across
+    # revisions; the content hash identifies a revision.
+    previous = find_live_by_source(session, tenant_id=tenant_id, source_path=str(path))
 
     chunks = chunk_blocks(parsed.blocks)
     if not chunks:
@@ -108,8 +122,9 @@ def _ingest_file(
 
     document_id = session.execute(
         text("""
-            INSERT INTO document (id, tenant_id, title, source_path, content_hash, labels)
-            VALUES (:id, :t, :title, :src, :hash, :labels)
+            INSERT INTO document
+              (id, tenant_id, title, source_path, content_hash, labels, version)
+            VALUES (:id, :t, :title, :src, :hash, :labels, :version)
             RETURNING id
         """),
         {
@@ -119,6 +134,7 @@ def _ingest_file(
             "src": str(path),
             "hash": content_hash,
             "labels": labels,
+            "version": (previous[1] + 1) if previous else 1,
         },
     ).scalar()
 
@@ -154,6 +170,15 @@ def _ingest_file(
                 "dim": provider.dimension,
             },
         )
+
+    if previous:
+        supersede_document(
+            session,
+            tenant_id=tenant_id,
+            old_document_id=previous[0],
+            new_document_id=uuid.UUID(str(document_id)),
+        )
+        result.documents_superseded += 1
 
     result.documents_created += 1
     result.chunks_created += len(chunks)
