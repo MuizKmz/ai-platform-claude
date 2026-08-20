@@ -174,3 +174,130 @@
     @apply font-sans;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Liquid Glass
+   
+   The refraction lives in an SVG filter (see lib/liquid-glass.ts). Everything
+   here is the rest of the material: the lit edge, the pointer bloom, and the
+   inner thickness. Those three work in every browser; only the refraction is
+   Chromium-only, so a Safari user sees a well-made glass panel rather than a
+   broken one.
+   --------------------------------------------------------------------------- */
+
+.glass-surface {
+  position: relative;
+  isolation: isolate;
+
+  /* Barely tinted. A glass panel that is mostly its own colour is a coloured
+     panel; the backdrop should dominate. */
+  background: color-mix(in oklch, var(--card) 55%, transparent);
+
+  /* Contains paint so the expensive backdrop-filter does not invalidate the
+     whole page on every scroll — the mitigation the technique needs to stay
+     responsive. */
+  contain: paint;
+
+  /* A hairline lit edge. Brighter at the top-left where the light is, fading
+     to nothing at the bottom-right, which is what gives the rim its curve. */
+  border: 1px solid transparent;
+  background-clip: padding-box;
+
+  /* Thickness. The inset highlight reads as the inner face of the glass;
+     the drop shadow lifts the panel off the backdrop. */
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklch, white 12%, transparent),
+    inset 0 -1px 0 0 color-mix(in oklch, black 20%, transparent),
+    0 8px 32px -8px color-mix(in oklch, black 45%, transparent);
+
+  --glass-x: 50%;
+  --glass-y: 50%;
+  --glass-glow: 0;
+}
+
+/* The specular rim, as a masked gradient ring. A plain border cannot vary
+   around its own perimeter; this can. */
+.glass-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklch, white 28%, transparent) 0%,
+    color-mix(in oklch, white 6%, transparent) 35%,
+    transparent 55%,
+    color-mix(in oklch, var(--primary) 14%, transparent) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* The pointer bloom. Positioned from custom properties set on pointermove, so
+   it updates without a React render. */
+.glass-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle 180px at var(--glass-x) var(--glass-y),
+    color-mix(in oklch, white 10%, transparent) 0%,
+    transparent 70%
+  );
+  opacity: var(--glass-glow);
+  transition: opacity 320ms ease-out;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Content sits above both overlays. */
+.glass-surface > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------------------------
+   The backdrop the glass refracts.
+   
+   Glass with nothing behind it is a grey rectangle — the material only shows
+   when there is structure to bend. Four slow-drifting radial gradients in the
+   accent palette give it that, without an image request or an external
+   dependency.
+   --------------------------------------------------------------------------- */
+
+.gradient-mesh {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-color: var(--background);
+  background-image:
+    radial-gradient(at 18% 22%, color-mix(in oklch, var(--primary) 22%, transparent) 0px, transparent 55%),
+    radial-gradient(at 82% 18%, color-mix(in oklch, var(--chart-3) 16%, transparent) 0px, transparent 50%),
+    radial-gradient(at 72% 78%, color-mix(in oklch, var(--chart-2) 18%, transparent) 0px, transparent 55%),
+    radial-gradient(at 25% 85%, color-mix(in oklch, var(--chart-4) 10%, transparent) 0px, transparent 45%);
+  animation: mesh-drift 32s ease-in-out infinite alternate;
+}
+
+/* Deliberately slow. Fast movement behind a working surface is a distraction;
+   at this speed it registers as depth rather than animation. */
+@keyframes mesh-drift {
+  0%   { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%; }
+  100% { background-position: 6% 8%, 94% 10%, 92% 90%, 8% 94%; }
+}
+
+/* Anyone who has asked for less motion gets a still backdrop. The gradients
+   remain, so the glass still has something to refract. */
+@media (prefers-reduced-motion: reduce) {
+  .gradient-mesh { animation: none; }
+  .glass-surface::after { transition: none; }
+}
