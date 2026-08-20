@@ -160,9 +160,9 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
         <div className="space-y-4 py-2">
           {!editing ? (
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Kind">
+              <Field label="Kind" htmlFor="kind">
                 <Select value={kind} onValueChange={setKind}>
-                  <SelectTrigger>
+                  <SelectTrigger id="kind">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -176,9 +176,11 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
               </Field>
               <Field
                 label="Slug"
+                htmlFor="slug"
                 hint="Lowercase; becomes part of the tool name the model sees."
               >
                 <Input
+                  id="slug"
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
                   placeholder="analytics"
@@ -187,8 +189,9 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
             </div>
           ) : null}
 
-          <Field label="Display name">
+          <Field label="Display name" htmlFor="display-name">
             <Input
+              id="display-name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Analytics warehouse"
@@ -197,9 +200,11 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
 
           <Field
             label="Required labels"
+            htmlFor="required-labels"
             hint="Comma-separated. A connector with no labels is reachable by nobody."
           >
             <Input
+              id="required-labels"
               value={labels}
               onChange={(e) => setLabels(e.target.value)}
               placeholder="analytics"
@@ -210,12 +215,13 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
             <>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
-                  <Field label="Host">
-                    <Input value={host} onChange={(e) => setHost(e.target.value)} />
+                  <Field label="Host" htmlFor="host">
+                    <Input id="host" value={host} onChange={(e) => setHost(e.target.value)} />
                   </Field>
                 </div>
-                <Field label="Port">
+                <Field label="Port" htmlFor="port">
                   <Input
+                    id="port"
                     value={port}
                     onChange={(e) => setPort(e.target.value)}
                     inputMode="numeric"
@@ -223,20 +229,21 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Database">
-                  <Input value={database} onChange={(e) => setDatabase(e.target.value)} />
+                <Field label="Database" htmlFor="database">
+                  <Input id="database" value={database} onChange={(e) => setDatabase(e.target.value)} />
                 </Field>
-                <Field label="Username" hint="Must be a read-only role.">
-                  <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+                <Field label="Username" htmlFor="username" hint="Must be a read-only role.">
+                  <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} />
                 </Field>
               </div>
-              <Field label="Schema" hint="Where the curated views live.">
-                <Input value={schemaName} onChange={(e) => setSchemaName(e.target.value)} />
+              <Field label="Schema" htmlFor="schema" hint="Where the curated views live.">
+                <Input id="schema" value={schemaName} onChange={(e) => setSchemaName(e.target.value)} />
               </Field>
             </>
           ) : (
-            <Field label="Base URL">
+            <Field label="Base URL" htmlFor="base-url">
               <Input
+                id="base-url"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://api.example.com"
@@ -246,6 +253,7 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
 
           <Field
             label={editing ? "Replace credential" : "Credential"}
+            htmlFor="credential"
             hint={
               editing
                 ? "Leave blank to keep the stored one. It cannot be displayed — the API has no endpoint that returns it."
@@ -253,6 +261,7 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
             }
           >
             <Input
+              id="credential"
               type="password"
               value={credential}
               onChange={(e) => setCredential(e.target.value)}
@@ -306,15 +315,24 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
 function Field({
   label,
   hint,
+  htmlFor,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Associates the label with its control.
+   *
+   * Without it a screen reader announces an unlabelled text box, and the field
+   * is unreachable by accessible name — which is how the E2E suite found this:
+   * getByLabel could not locate any of them. */
+  htmlFor: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs">{label}</Label>
+      <Label htmlFor={htmlFor} className="text-xs">
+        {label}
+      </Label>
       {children}
       {hint ? <p className="text-muted-foreground/70 text-[11px]">{hint}</p> : null}
     </div>

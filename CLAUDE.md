@@ -11,8 +11,16 @@ PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-onl
 connector whose write-refusal is enforced by a Postgres role rather than by inspecting
 strings.
 
+**Phase 6 complete — the control plane.** Connectors moved out of code into a table
+with RLS and encrypted, write-only credentials; an integrations API and page; users,
+roles, and labels; the trace and audit viewers; and Playwright E2E (ADR 0006).
+
 **Phase 7 complete — agent orchestration.** LangGraph loop over three tool types, with
 hard limits, invocation-time authorization, and Postgres checkpointing (ADR 0005).
+
+**Credentials are write-only.** No endpoint returns one — not masked, not to admins.
+`ConnectorOut` has no field for it; `has_credential` is the boolean a UI needs. Adding
+a read path would undo the guarantee, not extend it.
 
 There are still **no write operations**. Do not add any — that is Phase 9, and it needs
 the approval model that phase specifies. Phase 8 is security and reliability hardening.
@@ -60,6 +68,16 @@ uv run mypy app
 ```
 
 CI runs all four on every push. A red CI blocks the next phase.
+
+```powershell
+cd frontend
+npm run e2e                   # Playwright; needs all three services up
+```
+
+E2E is separate because it needs the whole stack running. Run it after any change
+that touches the API surface or a form — it covers the browser-only failures nothing
+else can see (a missing CORS method fails the preflight while every curl succeeds).
+See `frontend/e2e/README.md`.
 
 ## The layering rule
 
