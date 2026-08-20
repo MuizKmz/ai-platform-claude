@@ -320,3 +320,46 @@ def test_denied_calls_are_recorded_against_the_tenant(
 
     assert row.denied_tool_calls >= 1
     assert row.routed_directly is False
+
+
+# --- repeated calls ---------------------------------------------------------
+
+
+def test_a_repeated_call_is_flagged_and_not_re_run(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The console shows a repeat as a repeat.
+
+    Prompted by a live run where a question answerable from neither source drove
+    six identical `search_knowledge` calls at 3.4x normal cost, inside every
+    limit. Presenting those as six genuine consultations would misrepresent what
+    the agent did.
+    """
+    _plan(
+        monkeypatch,
+        [
+            {
+                "reasoning": "search",
+                "tool": "search_knowledge",
+                "arguments": {"query": "orders"},
+            },
+            {
+                "reasoning": "search again",
+                "tool": "search_knowledge",
+                "arguments": {"query": "orders"},
+            },
+            {"reasoning": "give up", "answer": "Not in the documents."},
+        ],
+    )
+
+    body = client.post(
+        "/v1/agent",
+        json={"question": "Compare the order count with the stated policy."},
+        headers=_headers(("public",)),
+    ).json()
+
+    assert body["routed_directly"] is False
+    calls = body["tool_calls"]
+    assert len(calls) == 2
+    assert calls[0]["cached"] is False
+    assert calls[1]["cached"] is True

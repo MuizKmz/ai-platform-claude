@@ -225,6 +225,9 @@ export interface AgentToolCall {
   /** True when the platform refused the call. Sent as its own field so the UI
    *  never has to detect an authorization failure by matching error text. */
   denied: boolean;
+  /** True when this repeated an earlier identical call and was served from the
+   *  first result instead of being re-run. */
+  cached: boolean;
 }
 
 export interface AgentResponse {

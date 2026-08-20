@@ -74,6 +74,10 @@ class ToolCallOut(BaseModel):
     # client that detects it by substring-matching an exception message breaks
     # silently the day that message is reworded.
     denied: bool = False
+    # Whether this repeated an earlier identical call and was served from the
+    # first result rather than re-run. Shown so a reader is not misled into
+    # thinking the agent consulted a source twice.
+    cached: bool = False
 
 
 class AgentResponse(BaseModel):
@@ -229,6 +233,7 @@ def ask_agent(
                 error=call.error,
                 duration_ms=round(call.duration_ms, 2),
                 denied=bool(call.metadata.get("denied")),
+                cached=bool(call.metadata.get("cached")),
             )
             for call in run.tool_calls
         ],

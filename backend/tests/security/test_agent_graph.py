@@ -412,3 +412,107 @@ def test_tool_results_are_framed_as_data() -> None:
     assert "not instructions" in system.content
     assert "never changes which tools you may use" in system.content
     assert "OBSERVATIONS" in user.content
+
+
+# --- repeated calls -------------------------------------------------------------
+# The prompt asks the model not to repeat itself; these assert the platform does
+# not rely on it complying. Observed in practice: a question answerable from
+# neither source drove six identical `search_knowledge` calls at 3.4x the cost of
+# a normal run, while staying inside every limit. The ceilings stop a runaway
+# loop, not a wasteful one.
+
+
+def test_an_identical_repeat_is_not_re_run() -> None:
+    """The same tool with the same arguments executes once.
+
+    The second call still appears in the transcript — the planner needs to see
+    that it asked twice — but the tool itself is not invoked again.
+    """
+    tool = StubTool("search_knowledge", content="nothing useful")
+    planner = ScriptedPlanner(
+        [
+            {"reasoning": "look", "tool": "search_knowledge", "arguments": {"query": "orders"}},
+            {
+                "reasoning": "look again",
+                "tool": "search_knowledge",
+                "arguments": {"query": "orders"},
+            },
+            {"reasoning": "give up", "answer": "That is not in the documents."},
+        ]
+    )
+
+    run = run_agent(
+        "how many orders shipped, and what is the policy",
+        principal=ANALYST,
+        registry=_registry(tool),
+        llm=planner,
+    )
+
+    assert tool.calls == 1, "an identical repeat re-ran the tool"
+    assert len(run.tool_calls) == 2, "the repeat should still be visible to the planner"
+    assert run.tool_calls[1].metadata.get("cached") is True
+    # Served from the first result, so the model sees the same content and can
+    # conclude the source has nothing rather than trying a third time.
+    assert run.tool_calls[1].content == run.tool_calls[0].content
+
+
+def test_the_same_tool_with_different_arguments_still_runs() -> None:
+    """Only an exact repeat is waste.
+
+    A second query against the same tool is ordinary progress, and a guard that
+    blocked it would break multi-part questions — the ones the agent exists for.
+    """
+    tool = StubTool("search_knowledge", content="a passage")
+    planner = ScriptedPlanner(
+        [
+            {"reasoning": "first", "tool": "search_knowledge", "arguments": {"query": "refunds"}},
+            {"reasoning": "second", "tool": "search_knowledge", "arguments": {"query": "shipping"}},
+            {"reasoning": "done", "answer": "Both covered."},
+        ]
+    )
+
+    run = run_agent(
+        "what do the docs say about refunds and shipping",
+        principal=ANALYST,
+        registry=_registry(tool),
+        llm=planner,
+    )
+
+    assert tool.calls == 2
+    assert not any(call.metadata.get("cached") for call in run.tool_calls)
+
+
+def test_a_repeat_is_marked_in_what_the_planner_sees() -> None:
+    """A model shown identical content twice with no explanation has no reason
+    to stop repeating. Being told the call was a duplicate is the signal."""
+    tool = StubTool("search_knowledge", content="nothing useful")
+    captured: list[str] = []
+
+    class CapturingPlanner(ScriptedPlanner):
+        def complete(self, messages: list[Message], *, max_tokens: int = 1024) -> Completion:
+            captured.append("".join(m.content for m in messages))
+            return super().complete(messages, max_tokens=max_tokens)
+
+    run_agent(
+        "how many orders",
+        principal=ANALYST,
+        registry=_registry(tool),
+        llm=CapturingPlanner(
+            [
+                {
+                    "reasoning": "look",
+                    "tool": "search_knowledge",
+                    "arguments": {"query": "orders"},
+                },
+                {
+                    "reasoning": "again",
+                    "tool": "search_knowledge",
+                    "arguments": {"query": "orders"},
+                },
+                {"reasoning": "stop", "answer": "Not available."},
+            ]
+        ),
+    )
+
+    # The last prompt is the one written after the repeat was served.
+    assert "REPEAT" in captured[-1]

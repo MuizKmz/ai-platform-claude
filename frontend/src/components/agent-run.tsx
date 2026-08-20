@@ -29,6 +29,7 @@ import type { AgentResponse, AgentToolCall } from "@/lib/api";
  */
 export function AgentRunView({ response }: { response: AgentResponse }) {
   const denied = response.tool_calls.filter((c) => c.denied).length;
+  const repeats = response.tool_calls.filter((c) => c.cached).length;
 
   return (
     <div className="space-y-3">
@@ -84,6 +85,7 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
             {denied} denied
           </span>
         ) : null}
+        {repeats > 0 ? <span>{repeats} repeat{repeats === 1 ? "" : "s"}</span> : null}
         <span>${response.cost_usd.toFixed(6)}</span>
         <Badge
           variant="outline"
@@ -137,6 +139,16 @@ function ToolCallCard({ call, index }: { call: AgentToolCall; index: number }) {
         ) : call.error ? (
           <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
             failed
+          </Badge>
+        ) : call.cached ? (
+          // Not a second consultation of the source. Labelled so the timeline
+          // is not read as the agent having checked twice.
+          <Badge
+            variant="outline"
+            className="h-5 px-1.5 text-[10px]"
+            title="A repeat of an earlier identical call, served from the first result"
+          >
+            repeat
           </Badge>
         ) : null}
 

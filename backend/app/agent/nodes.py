@@ -52,9 +52,10 @@ Reply with ONE JSON object and nothing else:
 1. Choose the tool whose description matches the KIND of question. Documents
    hold what is written down; the database holds counts and totals.
 2. One tool per step. You will see the result and can choose again.
-3. Do not call the same tool twice with the same arguments. If a tool returned
-   nothing useful, either try a different tool or answer honestly that the
-   information is not available.
+3. Do not call the same tool twice with the same arguments - a repeat is not
+   re-run, it returns the same result and wastes a step. If a tool returned
+   nothing useful, either try a different tool, vary the query meaningfully,
+   or answer honestly that the information is not available.
 4. If a tool reports a failure, say so in your answer. Never substitute a
    plausible value for one you could not retrieve.
 5. Answer only from tool results. If they do not contain the answer, say so.
@@ -103,6 +104,11 @@ def _render_observations(tool_calls: list[dict[str, Any]]) -> str:
     for index, raw in enumerate(tool_calls, start=1):
         call = ToolCall.from_dict(raw)
         header = f"[{index}] {call.tool}({json.dumps(call.arguments)})"
+        if call.metadata.get("cached"):
+            # Say plainly that the repeat was not re-run. A model shown the
+            # same content twice with no explanation has no reason to stop
+            # repeating; one told the call was a duplicate does.
+            header += "  - REPEAT of an earlier identical call; not re-run"
         body = f"FAILED: {call.error}" if call.failed else call.content
         parts.append(f"{header}\n{body}")
     return "\n\n".join(parts)
@@ -211,6 +217,19 @@ def plan_node(
     }
 
 
+def _previous_call(state: AgentState, tool_name: str, arguments: dict[str, Any]) -> ToolCall | None:
+    """An identical earlier call in this run, if there was one.
+
+    Matched on tool name and arguments together: the same tool with a genuinely
+    different query is progress, and only an exact repeat is waste.
+    """
+    for record in state.get("tool_calls") or []:
+        call = ToolCall.from_dict(record)
+        if call.tool == tool_name and call.arguments == arguments:
+            return call
+    return None
+
+
 def act_node(
     state: AgentState,
     *,
@@ -231,6 +250,40 @@ def act_node(
         budget.check()
     except LimitExceededError as exc:
         return {"halted_reason": str(exc)}
+
+    # A repeat of a call already made returns the earlier result instead of
+    # running it again.
+    #
+    # The prompt asks the model not to do this, and the prompt is not a
+    # control. Observed in practice: a question whose answer was in neither
+    # source drove six identical `search_knowledge` calls, costing 3.4x a
+    # normal run while staying comfortably inside every limit — the ceilings
+    # catch a runaway loop, not a wasteful one. The same reasoning that put
+    # authorization in `registry.invoke` rather than in the prompt applies
+    # here: what the model was told is not what the platform enforces.
+    #
+    # Serving the cached observation rather than dropping the call keeps the
+    # transcript honest — the planner sees it asked twice and got the same
+    # answer, which is the information it needs to stop asking.
+    repeat = _previous_call(state, tool_name, arguments)
+    if repeat is not None:
+        budget.record_tool_call()
+        cached = ToolCall(
+            tool=tool_name,
+            arguments=arguments,
+            content=repeat.content,
+            error=repeat.error,
+            duration_ms=0.0,
+            metadata={**repeat.metadata, "cached": True},
+        )
+        return {
+            "tool_calls": [cached.to_dict()],
+            "pending_tool": "",
+            "pending_args": {},
+            "steps": budget.steps,
+            "tool_call_count": budget.tool_calls,
+            "cost_usd": round(budget.cost_usd, 6),
+        }
 
     started = time.perf_counter()
     try:
