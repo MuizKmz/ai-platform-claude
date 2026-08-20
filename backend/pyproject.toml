@@ -24,6 +24,8 @@ dependencies = [
     "lxml>=5.3,<7.0",
     "arq>=0.26,<1.0",
     "sqlglot>=25.0,<28.0",
+    "langgraph>=1.0,<2.0",
+    "langgraph-checkpoint-postgres>=2.0,<3.0",
 ]
 
 [dependency-groups]

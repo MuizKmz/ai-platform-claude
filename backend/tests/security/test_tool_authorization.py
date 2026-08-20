@@ -13,7 +13,6 @@ regardless of what was offered or what succeeded a moment ago.
 
 from __future__ import annotations
 
-import time
 import uuid
 
 import pytest
@@ -243,9 +242,15 @@ def test_cost_ceiling_enforced() -> None:
 
 
 def test_wall_clock_limit_enforced() -> None:
-    budget = RunBudget(limits=RunLimits(max_seconds=0.05))
+    """Asserted by moving the clock, not by sleeping.
 
-    time.sleep(0.06)
+    A sleep-based version was flaky: Windows timer granularity is around 15ms,
+    so a 50ms budget and a 60ms sleep are not reliably distinguishable. A test
+    that fails one run in three trains people to re-run rather than to read it.
+    """
+    budget = RunBudget(limits=RunLimits(max_seconds=30.0))
+    # Pretend the run started well in the past.
+    budget.started_at -= 31.0
 
     with pytest.raises(LimitExceededError) as exc:
         budget.check()
@@ -266,13 +271,21 @@ def test_limits_name_which_one_was_hit() -> None:
 def test_remaining_time_shrinks() -> None:
     """Passed to upstreams as their own timeout, so one slow tool cannot
     consume the entire wall-clock budget unchecked."""
-    budget = RunBudget(limits=RunLimits(max_seconds=1.0))
-    first = budget.remaining_seconds()
+    budget = RunBudget(limits=RunLimits(max_seconds=30.0))
+    assert budget.remaining_seconds() == pytest.approx(30.0, abs=0.5)
 
-    time.sleep(0.05)
+    budget.started_at -= 20.0
 
-    assert budget.remaining_seconds() < first
-    assert budget.remaining_seconds() >= 0
+    assert budget.remaining_seconds() == pytest.approx(10.0, abs=0.5)
+
+
+def test_remaining_time_never_goes_negative() -> None:
+    """An overrun budget reports zero, not a negative timeout an upstream
+    would reject or treat as "no limit"."""
+    budget = RunBudget(limits=RunLimits(max_seconds=5.0))
+    budget.started_at -= 60.0
+
+    assert budget.remaining_seconds() == 0.0
 
 
 def test_budget_summary_carries_no_content() -> None:
