@@ -391,7 +391,7 @@ Recorded so they are decisions rather than surprises.
 
 | Gap | Consequence | Where it goes |
 |---|---|---|
-| Orphaned LangGraph checkpoints | Deleting a tenant leaves checkpoint rows behind; they carry no `tenant_id` | Needs a purge by `thread_id` |
+| ~~Orphaned LangGraph checkpoints~~ | **Closed.** `app.cli retention` now purges checkpoint rows whose `agent_run` is gone | — |
 | No automated key re-encryption | Rotating `CREDENTIAL_ENCRYPTION_KEY` means re-entering credentials by hand | Phase 11 |
 | Retention is manual | Data accumulates until someone runs the command | Schedule it |
 | Tokens in `sessionStorage` | XSS could read one | Phase 11, with httpOnly cookies |

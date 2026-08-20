@@ -110,6 +110,19 @@ POLICIES: tuple[RetentionPolicy, ...] = (
 # hold locks for minutes; the next run picks up where this one stopped.
 BATCH_LIMIT = 10_000
 
+# LangGraph's tables, which carry no tenant_id and are therefore reachable by
+# neither RLS nor the tenant cascade. Deleting a tenant removes its agent_run
+# rows and leaves the checkpoints behind forever.
+#
+# Measured on a development database after ten phases: 486 of 523 threads
+# orphaned, 8.5 MB. Not a leak anyone would notice until it was large, which is
+# how it survived being listed as a known gap since Phase 7.
+#
+# Cleaned by thread_id against agent_run — the table that DOES carry a tenant
+# and DOES get cascaded — so a checkpoint outlives its run by exactly the
+# agent_run retention period and no longer.
+CHECKPOINT_TABLES = ("checkpoint_writes", "checkpoint_blobs", "checkpoints")
+
 
 @dataclass
 class RetentionResult:
@@ -181,4 +194,61 @@ def apply_retention(
                 policy.days,
             )
 
+    deleted["checkpoints"] = _purge_orphaned_checkpoints(
+        session, batch_limit=batch_limit, dry_run=dry_run
+    )
+
     return RetentionResult(deleted=deleted)
+
+
+def _purge_orphaned_checkpoints(session: Session, *, batch_limit: int, dry_run: bool) -> int:
+    """Remove checkpoint rows whose agent_run is gone.
+
+    Ordered child-first: checkpoint_writes and checkpoint_blobs reference a
+    thread that checkpoints also holds, and removing the parent first would
+    leave rows nothing can find.
+
+    A thread with no agent_run is unreachable — resuming it requires the
+    ownership record that agent_run provides, so a checkpoint without one can
+    never be used again. Deleting it loses nothing.
+    """
+    total = 0
+
+    for table in CHECKPOINT_TABLES:
+        if dry_run:
+            count = int(
+                session.execute(
+                    text(f"""
+                        SELECT count(*) FROM {table} t
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM agent_run a WHERE a.thread_id = t.thread_id
+                        )
+                    """)  # noqa: S608 — table name from CHECKPOINT_TABLES
+                ).scalar()
+                or 0
+            )
+        else:
+            result = session.execute(
+                text(f"""
+                    DELETE FROM {table} WHERE ctid IN (
+                      SELECT t.ctid FROM {table} t
+                      WHERE NOT EXISTS (
+                          SELECT 1 FROM agent_run a WHERE a.thread_id = t.thread_id
+                      )
+                      LIMIT :limit
+                    )
+                """),  # noqa: S608 — table name from CHECKPOINT_TABLES
+                {"limit": batch_limit},
+            )
+            count = int(cast("CursorResult[Any]", result).rowcount or 0)
+
+        total += count
+        if count:
+            logger.info(
+                "%s %d orphaned row(s) from %s",
+                "would delete" if dry_run else "deleted",
+                count,
+                table,
+            )
+
+    return total

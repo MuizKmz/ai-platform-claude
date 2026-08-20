@@ -188,8 +188,10 @@ everywhere, so there is no partial-deletion state to reason about.
 What it does **not** reach:
 
 - LangGraph checkpoint tables, which carry no `tenant_id`. The `agent_run` rows
-  that reference them are deleted; the checkpoints become orphans. Purging them
-  is a known gap and is listed in the runbook.
+  that reference them are deleted immediately; the checkpoints become orphans
+  until the next retention run, which purges any whose `agent_run` is gone. A
+  thread without one is unreachable — resuming it needs the ownership record —
+  so nothing is lost, but there is a window.
 - Anything already sent to the model provider. Their retention terms govern
   that, not ours.
 

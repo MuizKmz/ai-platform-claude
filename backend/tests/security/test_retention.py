@@ -255,3 +255,102 @@ def test_a_custom_policy_is_honoured(engine: Engine) -> None:
             text("SELECT count(*) FROM trace_span WHERE id = :id"), {"id": recent}
         ).scalar()
     assert gone == 0
+
+
+# --- LangGraph checkpoints ----------------------------------------------------
+
+
+def test_orphaned_checkpoints_are_purged(engine: Engine) -> None:
+    """Checkpoint rows whose agent_run is gone are removed.
+
+    LangGraph's tables carry no tenant_id, so RLS does not reach them and
+    `DELETE FROM tenant` does not cascade to them. Deleting a tenant removed its
+    agent_run rows and left the checkpoints behind forever.
+
+    Measured on a development database after ten phases: 486 of 523 threads
+    orphaned, 8.5 MB. Listed as a known gap since Phase 7 and never closed,
+    because nothing surfaces a leak until it is large.
+
+    A thread with no agent_run is unreachable — resuming needs the ownership
+    record agent_run provides — so deleting it loses nothing.
+    """
+    orphan_thread = f"orphan-{uuid.uuid4().hex}"
+    kept_thread = f"kept-{uuid.uuid4().hex}"
+
+    with engine.begin() as conn:
+        # An orphan: a checkpoint with no agent_run.
+        conn.execute(
+            text("""
+                INSERT INTO checkpoints
+                  (thread_id, checkpoint_ns, checkpoint_id, checkpoint, metadata)
+                VALUES (:t, '', :c, '{}', '{}')
+            """),
+            {"t": orphan_thread, "c": uuid.uuid4().hex},
+        )
+        # And one whose run still exists.
+        conn.execute(
+            text("""
+                INSERT INTO agent_run (id, tenant_id, user_id, thread_id, question)
+                VALUES (:id, :t, :u, :thread, 'q')
+            """),
+            {"id": uuid.uuid4(), "t": TENANT, "u": uuid.uuid4(), "thread": kept_thread},
+        )
+        conn.execute(
+            text("""
+                INSERT INTO checkpoints
+                  (thread_id, checkpoint_ns, checkpoint_id, checkpoint, metadata)
+                VALUES (:t, '', :c, '{}', '{}')
+            """),
+            {"t": kept_thread, "c": uuid.uuid4().hex},
+        )
+
+    with Session(engine) as session:
+        apply_retention(session)
+        session.commit()
+
+    with engine.connect() as conn:
+        orphan_left = conn.execute(
+            text("SELECT count(*) FROM checkpoints WHERE thread_id = :t"),
+            {"t": orphan_thread},
+        ).scalar()
+        kept_left = conn.execute(
+            text("SELECT count(*) FROM checkpoints WHERE thread_id = :t"),
+            {"t": kept_thread},
+        ).scalar()
+
+    assert orphan_left == 0, "an orphaned checkpoint survived"
+    assert kept_left == 1, "a checkpoint with a live agent_run was deleted"
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM checkpoints WHERE thread_id = :t"), {"t": kept_thread})
+
+
+def test_a_dry_run_counts_orphaned_checkpoints_without_deleting(
+    engine: Engine,
+) -> None:
+    """An operator sees the scale of a first purge before running it."""
+    thread = f"orphan-{uuid.uuid4().hex}"
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO checkpoints
+                  (thread_id, checkpoint_ns, checkpoint_id, checkpoint, metadata)
+                VALUES (:t, '', :c, '{}', '{}')
+            """),
+            {"t": thread, "c": uuid.uuid4().hex},
+        )
+
+    with Session(engine) as session:
+        result = apply_retention(session, dry_run=True)
+        session.commit()
+
+    assert result.deleted["checkpoints"] >= 1
+
+    with engine.connect() as conn:
+        still_there = conn.execute(
+            text("SELECT count(*) FROM checkpoints WHERE thread_id = :t"), {"t": thread}
+        ).scalar()
+    assert still_there == 1, "a dry run deleted a checkpoint"
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM checkpoints WHERE thread_id = :t"), {"t": thread})
