@@ -149,3 +149,38 @@ def test_the_scratch_database_name_cannot_be_a_real_one() -> None:
     )
     for name in _DROPPABLE_DATABASES:
         assert "test" in name, f"scratch database {name!r} is not obviously a test database"
+
+
+def test_no_test_constructs_the_real_model_provider() -> None:
+    """Tests must not depend on an API key.
+
+    CI has no OPENAI_API_KEY, so a test that builds the real provider fails
+    there for a reason unrelated to what it asserts — and three did, silently,
+    from Phase 8 stage 1 until an audit ran the suite with the key unset. The
+    runs never completed, so nobody saw the failures.
+
+    Detected by looking for endpoints that build a provider internally being
+    exercised without `get_llm` being patched. A file that posts to /v1/chat or
+    /v1/agent must patch one, or it is making a real call.
+    """
+    offenders: list[str] = []
+
+    for path in _test_files():
+        source = path.read_text(encoding="utf-8")
+        hits_a_model_endpoint = '"/v1/chat"' in source or '"/v1/agent"' in source
+        if not hits_a_model_endpoint:
+            continue
+        # The patch must actually be APPLIED, not merely mentioned. The first
+        # version of this check looked for the string "get_llm" anywhere, which
+        # a docstring or a fixture name satisfies — so removing the real
+        # monkeypatch left it passing.
+        patched = re.search(r"setattr\([^)]*['\"]get_llm['\"]", source) or re.search(
+            r"monkeypatch\.setattr\(\s*\w+_module,\s*['\"]get_llm['\"]", source
+        )
+        if not patched:
+            offenders.append(path.relative_to(TESTS_DIR).as_posix())
+
+    assert not offenders, (
+        "these files exercise a model endpoint without replacing the provider, "
+        f"so they need an API key and will fail in CI: {offenders}"
+    )

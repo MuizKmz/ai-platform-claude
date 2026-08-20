@@ -89,6 +89,22 @@ def clean_counters() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def no_real_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test here may reach OpenAI.
+
+    These assert rate limiting and budgets, not generation quality — and CI has
+    no API key, so a test that constructs the real provider fails there for a
+    reason unrelated to what it checks. Three of them did, silently, from
+    Phase 8 stage 1 until an audit ran the suite with the key unset.
+    """
+    from app.api.v1 import chat as chat_module
+    from app.llm.providers.fake import FakeLLM
+
+    monkeypatch.setattr(chat_module, "get_llm", lambda: FakeLLM(response="An answer [1]."))
+    monkeypatch.setattr(chat_module, "get_embedding_provider", FakeEmbeddings)
+
+
+@pytest.fixture(autouse=True)
 def tenants(engine: Engine) -> Iterator[None]:
     def _wipe() -> None:
         with engine.begin() as conn:

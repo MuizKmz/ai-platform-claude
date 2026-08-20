@@ -123,6 +123,12 @@ def poisoned_corpus(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> Iterator
 
     monkeypatch.setattr(chat_module, "get_embedding_provider", FakeEmbeddings)
     monkeypatch.setattr(search_module, "get_embedding_provider", FakeEmbeddings)
+    # And the model. A red-team test that needs an API key does not run in CI,
+    # and a corpus that does not run proves nothing — which is the whole
+    # argument for having it in CI at all.
+    from app.llm.providers.fake import FakeLLM
+
+    monkeypatch.setattr(chat_module, "get_llm", lambda: FakeLLM(response="Nothing to report."))
 
     def _wipe() -> None:
         with engine.begin() as conn:
