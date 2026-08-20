@@ -174,6 +174,35 @@ def _reindex(tenant_slug: str) -> None:
     print(f"{documents} document(s) reindexed, {chunks} chunk(s) re-embedded ({provider.model})")
 
 
+def _retention(dry_run: bool) -> None:
+    """Delete data past its retention period.
+
+    Meant to run on a schedule — a nightly cron in a real deployment. Exposed
+    as a command rather than a background task because deleting data should be
+    something an operator can run, inspect, and explain, not something that
+    happens invisibly.
+    """
+    from sqlalchemy.orm import Session
+
+    from app.core.retention import POLICIES, apply_retention
+
+    print("Retention policy:")
+    for policy in POLICIES:
+        print(f"  {policy.table:22} {policy.days:>4} days  — {policy.reason}")
+    print()
+
+    with Session(owner_engine) as session:
+        result = apply_retention(session, dry_run=dry_run)
+        if not dry_run:
+            session.commit()
+
+    verb = "Would delete" if dry_run else "Deleted"
+    print(f"{verb}: {result}")
+    if dry_run and result.total:
+        print()
+        print("Run without --dry-run to apply.")
+
+
 def _split_csv(value: str) -> list[str]:
     """Parse a comma-separated option, dropping empties and surrounding space."""
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -205,7 +234,18 @@ def main() -> None:
     p.add_argument("--tenant", required=True)
     p.add_argument("--labels", default="", help="comma-separated; required")
 
+    p = sub.add_parser("retention", help="delete data past its retention period")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="count what would be deleted without deleting it",
+    )
+
     args = parser.parse_args()
+
+    if args.command == "retention":
+        _retention(args.dry_run)
+        return
 
     if args.command == "create-tenant":
         _create_tenant(args.slug, args.name)

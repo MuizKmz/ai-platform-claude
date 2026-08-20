@@ -7,6 +7,12 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 - **Phase plan:** [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md)
 - **Working rules for AI sessions:** [CLAUDE.md](CLAUDE.md)
 
+**Operating and security:**
+
+- **[Runbook](docs/RUNBOOK.md)** — how to run it, routine tasks, what to do when something breaks
+- **[Threat model](docs/THREAT_MODEL.md)** — every trust boundary, what defends it, and what does not
+- **[Data policy](docs/DATA_POLICY.md)** — what leaves the system, and how long we keep what stays
+
 ## Status
 
 | Phase | State |
