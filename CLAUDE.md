@@ -6,14 +6,17 @@ not current state. This file is current state.
 
 ## Current phase
 
-**Phase 4 complete — SQL connector.** Everything through grounded generation, plus
+**Phase 5 complete — two connectors, one interface.** Everything through grounded generation, plus
 PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-only SQL
 connector whose write-refusal is enforced by a Postgres role rather than by inspecting
 strings.
 
-There is still **no agent, no REST connector, and no frontend**. Do not add them.
-Phase 5 is a REST connector (GET only), which also validates the Connector ABC against
-a second implementation.
+There is still **no agent and no frontend**. Do not add them. Phase 6 is the
+integration console — the first frontend.
+
+`connectors/base.py` is pinned by `test_connector_abc_unchanged`. Two implementations
+now share it unmodified; if a third requires editing it, reconsider the design rather
+than updating the hash.
 See [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for what each phase unlocks.
 
 ## How to run

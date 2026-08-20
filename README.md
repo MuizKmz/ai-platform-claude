@@ -16,9 +16,10 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | **2 — Grounded generation** | ✅ Complete. Cited answers, verified citations, refusal path, per-tenant cost |
 | **3 — Real ingestion + evals** | ✅ Complete. PDF/DOCX/HTML, document lifecycle, eval harness, background worker |
 | **4 — SQL connector** | ✅ Complete. Read-only queries enforced by a Postgres role, five safety layers, audited |
+| **5 — REST connector** | ✅ Complete. GET-only HTTP, circuit breaker, config-driven endpoints — and `base.py` unchanged |
 
-**No agent, no tool calling beyond the SQL connector, and no frontend yet.** That is
-deliberate — see the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
+**No agent and no frontend yet.** That is deliberate — see the
+[roadmap](docs/IMPLEMENTATION_ROADMAP.md).
 
 ### Security guarantees currently enforced
 
@@ -65,6 +66,11 @@ These are tested on every push, not aspirations:
   returned address validated, so a rebinding attack has no window.
 - **Connector credentials are encrypted by the application** before reaching the database,
   with a key held outside it — a backup or stolen dump contains ciphertext.
+- **The REST connector cannot issue anything but GET** — not by convention, but because no
+  method parameter exists anywhere in the module. A capability that does not exist cannot
+  be misconfigured.
+- Query parameters are an **allowlist**, so a caller cannot reach features of an upstream
+  API that nobody chose to expose, and a path parameter containing `/` or `..` is refused.
 
 Run them yourself: `cd backend && uv run pytest -m security -v`
 
