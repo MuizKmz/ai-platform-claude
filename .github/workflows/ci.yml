@@ -127,14 +127,18 @@ jobs:
         # actually run" step below then fails the build, which is correct: a
         # skipped security test reports green while proving nothing.
         run: |
-          uv run --with fastapi --with uvicorn python -m uvicorn main:app             --port 9100 --app-dir ../infra/demo-api > /tmp/demo-api.log 2>&1 &
-          for i in $(seq 1 30); do
+          set -euo pipefail
+          nohup uv run --with fastapi --with uvicorn python -m uvicorn main:app --port 9100 --app-dir ../infra/demo-api > /tmp/demo-api.log 2>&1 &
+          for _ in $(seq 1 30); do
             if curl -sf http://127.0.0.1:9100/health > /dev/null; then
-              echo "demo API is up"; exit 0
+              echo "demo API is up"
+              exit 0
             fi
             sleep 1
           done
-          echo "::error::demo API failed to start"; cat /tmp/demo-api.log; exit 1
+          echo "::error::demo API failed to start within 30s"
+          cat /tmp/demo-api.log
+          exit 1
 
       - name: Test
         run: uv run pytest -q
@@ -160,12 +164,18 @@ jobs:
         # while proving nothing. -p no:randomly keeps output stable; the explicit
         # "0 skipped" assertion is what catches a database that never connected.
         run: |
-          uv run pytest -m security -q --no-header > result.txt 2>&1 || {
+          # Deselect `slow`: the restore test needs the eaip-postgres CONTAINER,
+          # which a service container is not — it is a bare Postgres with no
+          # docker exec to run pg_dump inside. Deselecting is honest; the two
+          # tests in that file which need no container still run, because their
+          # docker requirement is applied per test rather than per module.
+          uv run pytest -m "security and not slow" -q --no-header > result.txt 2>&1 || {
             cat result.txt; exit 1;
           }
           cat result.txt
           if grep -qE "[0-9]+ skipped" result.txt; then
             echo "::error::Security tests were SKIPPED. They must run in CI."
+            cat result.txt
             exit 1
           fi
           grep -qE "[0-9]+ passed" result.txt || {

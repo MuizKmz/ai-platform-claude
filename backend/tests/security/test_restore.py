@@ -50,11 +50,13 @@ def _docker_available() -> bool:
     return CONTAINER in result.stdout
 
 
-pytestmark = [
-    pytest.mark.security,
-    pytest.mark.slow,
-    pytest.mark.skipif(not _docker_available(), reason=f"{CONTAINER} is not running"),
-]
+# Marked at module level: everything here is a security concern and slow.
+# The DOCKER requirement is applied per test instead, because two of these read
+# files and need no container — and a security test that skips in CI proves
+# nothing, so the set that skips should be as small as the truth allows.
+pytestmark = [pytest.mark.security, pytest.mark.slow]
+
+needs_container = pytest.mark.skipif(not _docker_available(), reason=f"{CONTAINER} is not running")
 
 
 def _psql(database: str, sql: str) -> str:
@@ -169,6 +171,7 @@ def scratch_database() -> Iterator[str]:
 # --- the roadmap's named test -------------------------------------------------
 
 
+@needs_container
 def test_restore_from_backup(scratch_database: str) -> None:
     """Retrieval works against restored data.
 
@@ -239,6 +242,7 @@ def test_restore_from_backup(scratch_database: str) -> None:
         engine.dispose()
 
 
+@needs_container
 def test_tenant_isolation_survives_a_restore(scratch_database: str) -> None:
     """RLS policies are schema, so they come back with the schema.
 
