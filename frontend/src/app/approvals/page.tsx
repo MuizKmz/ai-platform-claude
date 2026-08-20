@@ -395,6 +395,24 @@ function ReviewDialog({
                 </pre>
               </div>
 
+              {dryRun.target_reachable === false ? (
+                // Shown BEFORE the approve button, because an action that
+                // cannot succeed should not be authorised. The check resolves
+                // the address; it contacts nothing.
+                <div className="border-destructive/40 bg-destructive/5 flex gap-2.5 rounded-md border px-3 py-2.5">
+                  <AlertCircle className="text-destructive mt-0.5 size-4 shrink-0" />
+                  <div>
+                    <p className="text-destructive text-xs font-medium">
+                      This action cannot reach its target
+                    </p>
+                    <p className="text-muted-foreground mt-0.5 text-[11px]">
+                      {dryRun.target_problem} Approving it would fail. Fix the
+                      connector first.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               <p className="text-muted-foreground/70 font-mono text-[10px]">
                 idempotency key {dryRun.idempotency_key.slice(0, 24)}… — sending
                 twice creates one action, not two
@@ -440,7 +458,11 @@ function ReviewDialog({
           </Button>
           <Button
             onClick={() => void decide("approve")}
-            disabled={busy !== null || !dryRun?.actionable}
+            disabled={
+              busy !== null ||
+              !dryRun?.actionable ||
+              dryRun?.target_reachable === false
+            }
           >
             {busy === "approve" ? (
               <Loader2 className="size-3.5 animate-spin" />

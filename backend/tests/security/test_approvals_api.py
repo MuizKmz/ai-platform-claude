@@ -477,3 +477,149 @@ def test_a_pending_request_cannot_be_compensated(client: TestClient, engine: Eng
         f"/v1/approvals/{request_id}/compensate", json={}, headers=_headers(admin=True)
     )
     assert response.status_code == 409
+
+
+def test_an_expired_proposal_cannot_be_approved(client: TestClient, engine: Engine) -> None:
+    """A stale proposal is refused before an approval is recorded.
+
+    Found by auditing rather than by a failing test. The executor caught the
+    expiry — nothing ran — but by then the row was marked approved, "WRITE
+    APPROVED" had been logged for something that was never approvable, and the
+    caller got a 502 implying the TARGET had failed when nothing was contacted.
+
+    A stale proposal is a client error, and an audit trail should not record an
+    approval that could never have executed.
+    """
+    request_id = _propose(engine, title="Stale request")
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE approval_request SET expires_at = now() - interval '2 hours' WHERE id = :id"
+            ),
+            {"id": request_id},
+        )
+
+    response = client.post(
+        f"/v1/approvals/{request_id}/approve", json={}, headers=_headers(admin=True)
+    )
+
+    # 409, not 502: nothing downstream was contacted.
+    assert response.status_code == 409
+    assert "expired" in response.json()["detail"].lower()
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT status, decided_by, decided_at FROM approval_request WHERE id = :id"),
+            {"id": request_id},
+        ).one()
+
+    assert row.status == "expired"
+    # The crucial part: no approval was recorded for something unapprovable.
+    assert row.decided_by is None, "an expired request was recorded as approved"
+    assert row.decided_at is None
+
+    assert httpx.get(f"{DEMO_API}/tickets", timeout=5).json() == []
+
+
+def test_a_proposal_inside_its_window_is_still_approvable(
+    client: TestClient, engine: Engine
+) -> None:
+    """The complement, so the expiry check cannot be satisfied by refusing
+    everything."""
+    request_id = _propose(engine, title="Fresh request")
+    response = client.post(
+        f"/v1/approvals/{request_id}/approve", json={}, headers=_headers(admin=True)
+    )
+    assert response.status_code == 200
+    assert len(httpx.get(f"{DEMO_API}/tickets", timeout=5).json()) == 1
+
+
+def test_dry_run_warns_when_the_target_is_unreachable(client: TestClient, engine: Engine) -> None:
+    """An approver learns a connector is misconfigured BEFORE authorising.
+
+    Added after noticing the egress check happened only at execution — so a
+    blocked address produced a 502 on a request the approver had already
+    authorised, and "WRITE APPROVED" was logged for something that could never
+    have run. Dry-run resolves the address; it opens no socket.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE connector SET settings = jsonb_set("
+                "settings, '{base_url}', '\"http://169.254.169.254\"') "
+                "WHERE tenant_id = :t"
+            ),
+            {"t": TENANT},
+        )
+
+    request_id = _propose(engine, title="Points at cloud metadata")
+    preview = client.get(f"/v1/approvals/{request_id}/dry-run", headers=_headers(admin=True)).json()
+
+    assert preview["target_reachable"] is False
+    assert "egress" in (preview["target_problem"] or "").lower()
+    # Nothing was contacted, and nothing was decided.
+    assert httpx.get(f"{DEMO_API}/tickets", timeout=5).json() == []
+
+
+def test_dry_run_reports_a_reachable_target_as_reachable(
+    client: TestClient, engine: Engine
+) -> None:
+    """The complement, so the check is not satisfied by always warning."""
+    request_id = _propose(engine)
+    preview = client.get(f"/v1/approvals/{request_id}/dry-run", headers=_headers(admin=True)).json()
+
+    assert preview["target_reachable"] is True
+    assert preview["target_problem"] is None
+
+
+def test_concurrent_approvals_execute_once(client: TestClient, engine: Engine) -> None:
+    """Three admins clicking Approve at the same moment produce ONE action.
+
+    Found by firing concurrent requests rather than by reading the code. Without
+    a row lock this is a check-then-act race: all three READ `pending`, all
+    three pass the status check, and all three send a request to the target.
+
+    That first run returned three 200s and created one ticket — but only because
+    the idempotency key made the TARGET deduplicate. A backstop against a
+    cooperative target is not a substitute for not sending three times, and a
+    target with weaker idempotency would have had three tickets.
+
+    `FOR UPDATE` in approve() makes the losers block until the winner commits,
+    at which point they read `approved` and get a 409.
+    """
+    import threading
+
+    request_id = _propose(engine, title="Concurrent approval")
+    statuses: list[int] = []
+    lock = threading.Lock()
+
+    def attempt() -> None:
+        # A distinct admin each time, so the self-approval guard is not what
+        # refuses.
+        headers = _headers(admin=True, user_id=uuid.uuid4())
+        response = TestClient(app).post(
+            f"/v1/approvals/{request_id}/approve", json={}, headers=headers
+        )
+        with lock:
+            statuses.append(response.status_code)
+
+    threads = [threading.Thread(target=attempt) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(statuses) == [200, 409, 409], (
+        f"expected one winner and two conflicts, got {sorted(statuses)}"
+    )
+
+    tickets = httpx.get(f"{DEMO_API}/tickets", timeout=5).json()
+    assert len(tickets) == 1, f"{len(tickets)} tickets from one approval"
+
+    with engine.connect() as conn:
+        decided = conn.execute(
+            text("SELECT decided_by_email FROM approval_request WHERE id = :id"),
+            {"id": request_id},
+        ).scalar()
+    assert decided is not None, "no approver was recorded"

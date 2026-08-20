@@ -254,9 +254,9 @@ def _build_registry(session: Session, principal: Principal) -> ToolRegistry:
     depends on api/, and a top-level import would make that a cycle the moment
     api/ wanted anything from mcp/.
     """
-    from app.api.v1.agent import _build_registry as build
+    from app.api.v1.agent import build_registry
 
-    return build(session, principal, _NullLLM())
+    return build_registry(session, principal, _NullLLM())
 
 
 class _NullLLM:

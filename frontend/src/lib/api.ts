@@ -456,6 +456,11 @@ export interface DryRun {
   reason: string | null;
   expires_at: string;
   actionable: boolean;
+  /** Whether the target address passes the egress policy. Resolved, not
+   *  contacted — so an approver learns a connector is misconfigured before
+   *  authorising an action that cannot succeed. */
+  target_reachable: boolean | null;
+  target_problem: string | null;
 }
 
 export interface ExecutionResult {

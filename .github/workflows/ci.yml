@@ -116,6 +116,26 @@ jobs:
       - name: Apply migrations
         run: uv run alembic upgrade head
 
+      - name: Start the demo write target
+        # Phase 9's approval tests write to a real HTTP service, because
+        # idempotency and compensating actions are properties of an HTTP
+        # conversation — a mock returning whatever the test wants proves the
+        # platform CALLS something without proving that calling twice creates
+        # one ticket.
+        #
+        # Without this, 17 security tests skip. The "Security suite must
+        # actually run" step below then fails the build, which is correct: a
+        # skipped security test reports green while proving nothing.
+        run: |
+          uv run --with fastapi --with uvicorn python -m uvicorn main:app             --port 9100 --app-dir ../infra/demo-api > /tmp/demo-api.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9100/health > /dev/null; then
+              echo "demo API is up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::demo API failed to start"; cat /tmp/demo-api.log; exit 1
+
       - name: Test
         run: uv run pytest -q
 

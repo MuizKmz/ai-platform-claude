@@ -132,8 +132,13 @@ def needs_agent(question: str) -> bool:
     return bool(_MULTI_STEP.search(question)) or question.count("?") > 1
 
 
-def _build_registry(session: Session, principal: Principal, llm: LLMProvider) -> ToolRegistry:
+def build_registry(session: Session, principal: Principal, llm: LLMProvider) -> ToolRegistry:
     """Tools for one request, bound to this request's session.
+
+    Public because the MCP server builds the same registry — that is the phase
+    10 guarantee, "one chokepoint, two front doors". Named without an
+    underscore so the coupling is deliberate rather than a private function
+    somebody reached into.
 
     The session carries the tenant context that RLS reads. Sharing one across
     requests would mean a tool answering request B against request A's tenant.
@@ -215,7 +220,7 @@ def ask_agent(
         # with one obvious source does not need a planning call to discover it.
         return _answer_directly(db, principal, request.question, llm, trace_id)
 
-    registry = _build_registry(db, principal, llm)
+    registry = build_registry(db, principal, llm)
 
     with trace(db, "agent.run", tenant_id=principal.tenant_id, trace_id=trace_id) as span:
         run = run_agent(

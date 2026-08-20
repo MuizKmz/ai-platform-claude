@@ -96,6 +96,12 @@ class DryRunOut(BaseModel):
     # True when this request can still be approved. False for anything already
     # decided, executed, or expired.
     actionable: bool
+    # Whether the target address passes the egress policy. Checked here so an
+    # approver learns a connector is misconfigured BEFORE authorising an action
+    # that cannot succeed — it is a DNS resolution, not a request, so nothing is
+    # contacted. None when there is no base URL to check.
+    target_reachable: bool | None
+    target_problem: str | None
 
 
 class DecisionIn(BaseModel):
@@ -201,6 +207,8 @@ def dry_run(request_id: uuid.UUID, principal: CurrentPrincipal, db: TenantDB) ->
         {"slug": row.connector_slug},
     ).scalar()
 
+    reachable, problem = _check_target(db, row.connector_slug, base_url)
+
     return DryRunOut(
         id=row.id,
         status=row.status,
@@ -217,7 +225,51 @@ def dry_run(request_id: uuid.UUID, principal: CurrentPrincipal, db: TenantDB) ->
         reason=row.reason,
         expires_at=row.expires_at,
         actionable=(row.status == ApprovalStatus.PENDING and row.expires_at > datetime.now(UTC)),
+        target_reachable=reachable,
+        target_problem=problem,
     )
+
+
+def _check_target(db: Any, slug: str, base_url: str | None) -> tuple[bool | None, str | None]:
+    """Whether the egress policy permits this connector's address.
+
+    Resolves and validates; opens no socket. A blocked address is knowable
+    before an approval is recorded, and telling an approver afterwards — via a
+    502 on a request they already authorised — is telling them too late.
+    """
+    if not base_url:
+        return None, None
+
+    import httpx
+
+    from app.connectors.egress import (
+        EgressBlockedError,
+        EgressPolicy,
+        resolve_and_validate,
+    )
+
+    config = dict(
+        db.execute(
+            text("SELECT settings FROM connector WHERE slug = :slug"), {"slug": slug}
+        ).scalar()
+        or {}
+    )
+
+    parsed = httpx.URL(base_url)
+    try:
+        resolve_and_validate(
+            parsed.host,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            EgressPolicy(
+                allow_private=bool(config.get("allow_private")),
+                allow_loopback=bool(config.get("allow_loopback")),
+            ),
+        )
+    except EgressBlockedError:
+        return False, "The target address is not permitted by the egress policy."
+    except OSError:
+        return False, "The target host could not be resolved."
+    return True, None
 
 
 @router.post("/approvals/{request_id}/approve", response_model=ExecutionOut)
@@ -239,8 +291,24 @@ def approve(
     """
     _require_admin(principal)
 
+    # FOR UPDATE, and it is load-bearing.
+    #
+    # Without the lock this is a check-then-act race: three admins clicking
+    # Approve at the same moment all READ `pending`, all pass the status check,
+    # and all proceed to execute. Found by firing three concurrent approvals at
+    # one request — all three returned 200 and all three sent a request to the
+    # target. Only the idempotency key kept it to one ticket, which is a
+    # backstop against a target that deduplicates, not a substitute for not
+    # sending three times.
+    #
+    # The lock makes the losers block until the winner commits, at which point
+    # they read `approved` and are refused with a 409.
     row = db.execute(
-        text("SELECT id, status, requested_by, summary FROM approval_request WHERE id = :id"),
+        text("""
+            SELECT id, status, requested_by, summary, expires_at
+            FROM approval_request WHERE id = :id
+            FOR UPDATE
+        """),
         {"id": request_id},
     ).first()
     if row is None:
@@ -250,6 +318,35 @@ def approve(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"This request is already {row.status!r} and cannot be approved again.",
+        )
+
+    # Expiry is checked HERE, before an approval is recorded.
+    #
+    # The executor checks it too, and that is where it was originally caught —
+    # but by then the row had already been marked approved, "WRITE APPROVED"
+    # had been logged for something that was never approvable, and the caller
+    # got a 502 implying the TARGET had failed when nothing was contacted.
+    #
+    # A stale proposal is a client error, not a gateway error, and the audit
+    # trail should not record an approval that could never have run.
+    if row.expires_at and row.expires_at < datetime.now(UTC):
+        db.execute(
+            text("""
+                UPDATE approval_request
+                SET status = :status, error = 'expired before a decision was made'
+                WHERE id = :id
+            """),
+            {"id": request_id, "status": ApprovalStatus.EXPIRED},
+        )
+        # Committed before raising. `get_tenant_db` rolls back on an exception,
+        # so without this the row stays `pending` and the next approver meets
+        # the same stale proposal — the marking would be lost with the refusal.
+        db.commit()
+        logger.info("write proposal expired: request=%s tenant=%s", request_id, principal.tenant_id)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This request expired before a decision was made. Propose it again if "
+            "it is still wanted — approving stale actions is how the wrong thing happens.",
         )
 
     # The second pair of eyes. An admin approving their own proposal is one
@@ -335,8 +432,12 @@ def reject(
     """
     _require_admin(principal)
 
+    # Locked for the same reason as approve(): without it, two admins rejecting
+    # simultaneously both pass the status check and both write a decision, and
+    # the audit trail records whichever committed last.
     row = db.execute(
-        text("SELECT id, status FROM approval_request WHERE id = :id"), {"id": request_id}
+        text("SELECT id, status FROM approval_request WHERE id = :id FOR UPDATE"),
+        {"id": request_id},
     ).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No such approval request.")

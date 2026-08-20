@@ -195,7 +195,19 @@ test.describe("accessibility", () => {
    * A screen reader announcing "button" six times is unusable, and that is the
    * failure this catches cheaply.
    */
-  for (const path of ["/chat", "/agent", "/knowledge", "/integrations", "/users", "/traces"]) {
+  // Every page reachable from the nav. Kept in sync with NAV in app-shell.tsx
+  // by test_the_accessibility_list_covers_every_nav_page below — a page added
+  // to the nav and forgotten here would go unchecked, which is how /approvals
+  // was missed when it shipped.
+  for (const path of [
+    "/chat",
+    "/agent",
+    "/knowledge",
+    "/integrations",
+    "/approvals",
+    "/users",
+    "/traces",
+  ]) {
     test(`${path} has one heading and named controls`, async ({ page }) => {
       await signIn(page, issueToken(ADMIN.tenant, ADMIN.email));
       await page.goto(path);
@@ -213,4 +225,39 @@ test.describe("accessibility", () => {
       }
     });
   }
+
+  test("the list above covers every page in the nav", async ({ page }) => {
+    /**
+     * The accessibility loop is a hardcoded list, and a hardcoded list drifts.
+     * /approvals shipped without a check here because nobody remembered to add
+     * it — so this reads the real nav and asserts the loop covers all of it.
+     */
+    await signIn(page, issueToken(ADMIN.tenant, ADMIN.email));
+
+    const navLinks = await page
+      .getByRole("navigation", { name: /main/i })
+      .getByRole("link")
+      .all();
+
+    const hrefs = await Promise.all(
+      navLinks.map((link) => link.getAttribute("href")),
+    );
+
+    const checked = [
+      "/chat",
+      "/agent",
+      "/knowledge",
+      "/integrations",
+      "/approvals",
+      "/users",
+      "/traces",
+    ];
+
+    for (const href of hrefs) {
+      expect(
+        checked,
+        `${href} is in the nav but has no accessibility check`,
+      ).toContain(href);
+    }
+  });
 });

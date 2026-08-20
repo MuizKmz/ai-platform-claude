@@ -285,7 +285,7 @@ def test_mcp_tools_respect_authorization(client: TestClient) -> None:
     security model wearing a different name, so this asserts the refusal is
     identical — same principal, same tool, same message, both doors.
     """
-    from app.api.v1.agent import _build_registry
+    from app.api.v1.agent import build_registry
     from app.db.session import SessionLocal
     from app.tools.base import ToolAuthorizationError
 
@@ -308,7 +308,7 @@ def test_mcp_tools_respect_authorization(client: TestClient) -> None:
             text("SELECT set_config('app.tenant_id', :t, true)"),
             {"t": str(principal.tenant_id)},
         )
-        registry = _build_registry(session, principal, _FakeLLM())
+        registry = build_registry(session, principal, _FakeLLM())
         try:
             registry.invoke(principal, "query_database", question="x")
             internal_message = "NOT REFUSED"
