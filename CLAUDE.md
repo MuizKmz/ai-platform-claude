@@ -11,10 +11,15 @@ PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-onl
 connector whose write-refusal is enforced by a Postgres role rather than by inspecting
 strings.
 
-**Phase 6 complete — the integration console.** Next.js + Tailwind + shadcn/ui, dark
-by default with Liquid Glass surfaces (ADR 0004). Chat, knowledge, traces, audit.
+**Phase 7 complete — agent orchestration.** LangGraph loop over three tool types, with
+hard limits, invocation-time authorization, and Postgres checkpointing (ADR 0005).
 
-There is still **no agent**. Do not add one — that is Phase 7.
+There are still **no write operations**. Do not add any — that is Phase 9, and it needs
+the approval model that phase specifies. Phase 8 is security and reliability hardening.
+
+Tool authorization is re-checked at every invocation in `tools/base.py`. Never cache it,
+never trust what the model requested, and never let a tool be invoked outside
+`ToolRegistry.invoke`.
 
 The frontend is a **pure API client**. All backend calls go through
 `frontend/src/lib/api.ts`; business logic in a route handler means two backends,

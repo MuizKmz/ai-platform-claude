@@ -1,0 +1,141 @@
+# Tool-selection accuracy.
+#
+# `expects` is the SET of tools a correct run should use — not a sequence.
+# Order is rarely determined by the question, and grading it would fail runs
+# that were right for reasons the grader did not anticipate.
+#
+#   knowledge — the answer is written down somewhere
+#   database  — the answer requires arithmetic over records
+#   both      — genuinely multi-source; neither tool alone suffices
+#   none      — answerable from neither, so the correct outcome is a refusal
+#
+# The `both` cases are the point of the phase. A single-tool question proves
+# the router works; only a two-source question proves the agent does.
+
+# --- knowledge only ---------------------------------------------------------
+
+- question: How long does a refund take?
+  expects: [search_knowledge]
+  kind: knowledge
+
+- question: What is the deadline for requesting a refund?
+  expects: [search_knowledge]
+  kind: knowledge
+
+- question: Is accidental damage covered by the warranty?
+  expects: [search_knowledge]
+  kind: knowledge
+
+- question: What are the password requirements?
+  expects: [search_knowledge]
+  kind: knowledge
+
+- question: How much notice is needed to work remotely full time?
+  expects: [search_knowledge]
+  kind: knowledge
+
+- question: What does the handbook say about expense claims?
+  expects: [search_knowledge]
+  kind: knowledge
+
+- question: How quickly is access revoked when someone leaves?
+  expects: [search_knowledge]
+  kind: knowledge
+
+- question: What is the escalation process for a P1 incident?
+  expects: [search_knowledge]
+  kind: knowledge
+
+# --- database only ----------------------------------------------------------
+
+- question: How many orders have been shipped?
+  expects: [query_database]
+  kind: database
+
+- question: How many customers are in the UK?
+  expects: [query_database]
+  kind: database
+
+- question: Which customer has spent the most?
+  expects: [query_database]
+  kind: database
+
+- question: What is the total revenue from non-cancelled orders?
+  expects: [query_database]
+  kind: database
+
+- question: How many orders are still pending?
+  expects: [query_database]
+  kind: database
+
+- question: Which product has generated the most revenue?
+  expects: [query_database]
+  kind: database
+
+- question: How many order lines are there in total?
+  expects: [query_database]
+  kind: database
+
+- question: How many enterprise customers do we have?
+  expects: [query_database]
+  kind: database
+
+# --- both: the cases the agent exists for ------------------------------------
+
+- question: How many orders were shipped, and what does the handbook say about shipping?
+  expects: [query_database, search_knowledge]
+  kind: both
+
+- question: How many orders are pending, and what is our stated policy on order processing?
+  expects: [query_database, search_knowledge]
+  kind: both
+
+- question: Which customer spent the most, and what is the refund policy for them?
+  expects: [query_database, search_knowledge]
+  kind: both
+
+- question: How many orders were cancelled, and what does the documentation say about cancellations?
+  expects: [query_database, search_knowledge]
+  kind: both
+
+- question: Compare the number of UK customers with what the handbook says about international shipping.
+  expects: [query_database, search_knowledge]
+  kind: both
+
+- question: How many products do we sell, and what are the documented lead times?
+  expects: [query_database, search_knowledge]
+  kind: both
+
+- question: What is total revenue, and how is revenue defined in our documentation?
+  expects: [query_database, search_knowledge]
+  kind: both
+
+- question: How many orders shipped late, and what is the stated shipping commitment?
+  expects: [query_database, search_knowledge]
+  kind: both
+
+# --- neither: a refusal is the correct answer --------------------------------
+
+- question: What is the CEO's home address?
+  expects: []
+  kind: none
+
+- question: Which competitor should we acquire next year?
+  expects: []
+  kind: none
+
+- question: What is the current share price?
+  expects: []
+  kind: none
+
+- question: How many support tickets were raised last quarter?
+  expects: []
+  kind: none
+
+- question: What is the production database root password?
+  expects: []
+  kind: none
+
+- question: Who won the 1994 World Cup?
+  expects: []
+  kind: none

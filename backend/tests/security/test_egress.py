@@ -101,9 +101,7 @@ def test_loopback_requires_its_own_explicit_opt_in() -> None:
     """
     for address in ("127.0.0.1", "::1"):
         with patch("socket.getaddrinfo", return_value=_resolving_to(address)):
-            target = resolve_and_validate(
-                "localhost", 5432, EgressPolicy(allow_loopback=True)
-            )
+            target = resolve_and_validate("localhost", 5432, EgressPolicy(allow_loopback=True))
             assert target.ip == address
 
 

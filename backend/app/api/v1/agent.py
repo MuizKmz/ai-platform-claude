@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, SecretStr
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.agent.checkpointer import get_checkpointer
 from app.agent.graph import run_agent
 from app.agent.limits import RunLimits
 from app.api.deps import CurrentPrincipal, TenantDB
@@ -178,6 +181,7 @@ def ask_agent(
             registry=registry,
             llm=llm,
             limits=RunLimits(),
+            checkpointer=get_checkpointer(),
         )
         # Counts and totals only — never tool arguments or results. A span is a
         # second copy of tenant data that nobody thinks to review.
@@ -190,6 +194,22 @@ def ask_agent(
             "denied_tool_calls",
             sum(1 for c in run.tool_calls if c.metadata.get("denied")),
         )
+
+    denied = sum(1 for c in run.tool_calls if c.metadata.get("denied"))
+    _record_run(
+        db,
+        principal=principal,
+        thread_id=run.thread_id,
+        question=run.question,
+        answer=run.answer,
+        halted_reason=run.halted_reason,
+        steps=run.steps,
+        tool_call_count=len(run.tool_calls),
+        denied_tool_calls=denied,
+        cost_usd=run.cost_usd,
+        routed_directly=False,
+        trace_id=trace_id,
+    )
 
     return AgentResponse(
         question=run.question,
@@ -209,6 +229,55 @@ def ask_agent(
         cost_usd=run.cost_usd,
         trace_id=trace_id,
         routed_directly=False,
+    )
+
+
+def _record_run(
+    db: Session,
+    *,
+    principal: Principal,
+    thread_id: str,
+    question: str,
+    answer: str | None,
+    halted_reason: str | None,
+    steps: int,
+    tool_call_count: int,
+    denied_tool_calls: int,
+    cost_usd: float,
+    routed_directly: bool,
+    trace_id: str,
+) -> None:
+    """Record the run against its tenant.
+
+    This row is what makes a checkpoint safe to resume: LangGraph's own tables
+    carry no tenant_id, so ownership of a thread is established here, in a
+    table the database protects.
+    """
+    db.execute(
+        text("""
+            INSERT INTO agent_run
+              (id, tenant_id, user_id, thread_id, question, answer, halted_reason,
+               steps, tool_call_count, denied_tool_calls, cost_usd, routed_directly,
+               trace_id)
+            VALUES
+              (:id, :tenant, :user, :thread, :question, :answer, :halted,
+               :steps, :calls, :denied, :cost, :routed, :trace)
+        """),
+        {
+            "id": uuid.uuid4(),
+            "tenant": principal.tenant_id,
+            "user": principal.user_id,
+            "thread": thread_id,
+            "question": question,
+            "answer": answer,
+            "halted": halted_reason,
+            "steps": steps,
+            "calls": tool_call_count,
+            "denied": denied_tool_calls,
+            "cost": cost_usd,
+            "routed": routed_directly,
+            "trace": trace_id,
+        },
     )
 
 
@@ -243,6 +312,21 @@ def _answer_directly(
         span.set_attribute("result_count", len(hits))
         span.set_attribute("refused", answer.refused)
         span.set_attribute("cost_usd", cost)
+
+    _record_run(
+        db,
+        principal=principal,
+        thread_id=str(uuid.uuid4()),
+        question=question,
+        answer=answer.text,
+        halted_reason=None,
+        steps=0,
+        tool_call_count=0,
+        denied_tool_calls=0,
+        cost_usd=round(cost, 6),
+        routed_directly=True,
+        trace_id=trace_id,
+    )
 
     return AgentResponse(
         question=question,

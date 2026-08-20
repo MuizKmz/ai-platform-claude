@@ -18,9 +18,10 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | **4 — SQL connector** | ✅ Complete. Read-only queries enforced by a Postgres role, five safety layers, audited |
 | **5 — REST connector** | ✅ Complete. GET-only HTTP, circuit breaker, config-driven endpoints — and `base.py` unchanged |
 | **6 — Integration console** | ✅ Complete. Next.js control plane: chat with citations, knowledge management, trace and audit viewers |
+| **7 — Agent orchestration** | ✅ Complete. Multi-tool reasoning with hard limits, invocation-time authorization, and durable state |
 
-**No agent yet.** That is deliberate — see the
-[roadmap](docs/IMPLEMENTATION_ROADMAP.md).
+**No write operations.** That is deliberate — Phase 9 adds them behind human approval.
+See the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
 
 ### Security guarantees currently enforced
 
@@ -67,6 +68,13 @@ These are tested on every push, not aspirations:
   returned address validated, so a rebinding attack has no window.
 - **Connector credentials are encrypted by the application** before reaching the database,
   with a key held outside it — a backup or stolen dump contains ciphertext.
+- **A model can request any tool; the platform decides what runs.** Authorization is
+  re-derived from the verified identity at every invocation, ignoring what the model was
+  offered, what it asked for, and what it called successfully a moment earlier. A malicious
+  instruction in a retrieved document can make a model *request* an unauthorized tool — it
+  cannot make the registry agree.
+- Denied tool calls are counted separately from failures, because a run of them is what an
+  escalation attempt looks like and it is invisible among ordinary errors.
 - **The REST connector cannot issue anything but GET** — not by convention, but because no
   method parameter exists anywhere in the module. A capability that does not exist cannot
   be misconfigured.
@@ -567,6 +575,49 @@ shadow — work everywhere, so the degradation costs realism rather than usabili
 
 **Tables are deliberately solid.** Dense text read through a refracting lens is the one
 place the material fights the tool.
+
+## The agent
+
+```powershell
+$token = uv run python -m app.cli token acme dana@acme.test
+$body = @{ question = "How many orders were shipped and what does the handbook say about shipping?" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/v1/agent" `
+  -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" -Body $body
+```
+
+**Simple questions do not use the agent.** A question without multi-step shape routes
+straight to grounded generation — 0 steps and about a fifth of the cost. The agent is not
+free, and a planning call before a retrieval call doubles both for a question that never
+needed a decision.
+
+### Tool-selection accuracy
+
+| category | accuracy | n |
+|---|---|---|
+| knowledge only | 100% | 8 |
+| database only | 100% | 8 |
+| **both sources** | **88%** | 8 |
+| refusal expected | 100% | 6 |
+| **overall** | **97%** | **30** |
+
+```powershell
+cd backend
+uv run python ../evals/tool_selection_eval.py   # ~$0.025 per run
+```
+
+The `both` column is the one that matters: a question needing two sources answered from
+one is a wrong answer that looks like a right one. The single failure is exactly that —
+the agent found "revenue" defined in the documentation and stopped without computing the
+total.
+
+### Limits
+
+Four independent ceilings, all enforced and tested: **8 steps, 12 tool calls, 120 seconds,
+$0.50**. Each names itself when tripped, because "the agent stopped" is not actionable and
+"stopped after 8 steps" is.
+
+Runs are checkpointed to Postgres, so a worker restart does not discard work already paid
+for.
 
 ## Running alongside other Docker projects
 
