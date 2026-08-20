@@ -11,8 +11,8 @@ PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-onl
 connector whose write-refusal is enforced by a Postgres role rather than by inspecting
 strings.
 
-**Phase 6 in progress:** the integration console. Next.js + Tailwind + shadcn/ui,
-dark by default (ADR 0004).
+**Phase 6 complete — the integration console.** Next.js + Tailwind + shadcn/ui, dark
+by default with Liquid Glass surfaces (ADR 0004). Chat, knowledge, traces, audit.
 
 There is still **no agent**. Do not add one — that is Phase 7.
 

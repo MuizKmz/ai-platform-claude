@@ -17,8 +17,9 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | **3 — Real ingestion + evals** | ✅ Complete. PDF/DOCX/HTML, document lifecycle, eval harness, background worker |
 | **4 — SQL connector** | ✅ Complete. Read-only queries enforced by a Postgres role, five safety layers, audited |
 | **5 — REST connector** | ✅ Complete. GET-only HTTP, circuit breaker, config-driven endpoints — and `base.py` unchanged |
+| **6 — Integration console** | ✅ Complete. Next.js control plane: chat with citations, knowledge management, trace and audit viewers |
 
-**No agent and no frontend yet.** That is deliberate — see the
+**No agent yet.** That is deliberate — see the
 [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
 
 ### Security guarantees currently enforced
@@ -530,6 +531,42 @@ FROM connector_audit ORDER BY created_at DESC LIMIT 10;
 
 Denied rows are the more valuable ones: a run of refusals is what an attempted bypass
 looks like, and a log of successes alone cannot show it.
+
+## The console
+
+```powershell
+cd frontend
+npm install
+npm run dev        # http://localhost:3000
+```
+
+Sign in by pasting a token from `uv run python -m app.cli token acme alice@acme.test`.
+There is no password because there is no credential check — tokens are minted locally
+against a development signing key, and a login form implying otherwise would be theatre.
+
+| Page | What it does |
+|---|---|
+| **Chat** | Ask questions; every citation is verified server-side and expands to its chunk id |
+| **Knowledge** | List, delete, and ingest documents; watch job progress live |
+| **Traces** | Each request as a timeline of spans, with duration, tokens and cost |
+| **Audit** | Every connector query, allowed or denied, with the SQL |
+
+Traces and audit require the `admin` role: they are records *about* users rather than
+*for* them.
+
+### Visual design
+
+Dark, dense, technical — a control plane is somewhere people work rather than visit.
+Surfaces use **Liquid Glass**: an SVG `feDisplacementMap` derived from Snell's law bends
+the backdrop at the rim and leaves it flat across the middle, which is what distinguishes
+it from glassmorphism.
+
+Only Chromium renders SVG filters in `backdrop-filter`; Safari and Firefox fall back to a
+plain blur. The other three layers of the material — specular rim, pointer bloom, inner
+shadow — work everywhere, so the degradation costs realism rather than usability.
+
+**Tables are deliberately solid.** Dense text read through a refracting lens is the one
+place the material fights the tool.
 
 ## Running alongside other Docker projects
 

@@ -133,6 +133,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ directory, labels }),
     }),
+
+  // --- observability --------------------------------------------------------
+  // Admin-only. Both endpoints return records ABOUT users rather than for
+  // them, and the API enforces the role — this client does not pre-check it.
+
+  traces: (limit = 25) => request<Trace[]>(`/v1/traces?limit=${limit}`),
+
+  audit: (limit = 50, deniedOnly = false) =>
+    request<AuditEntry[]>(`/v1/audit?limit=${limit}&denied_only=${deniedOnly}`),
 };
 
 // --- response shapes --------------------------------------------------------
@@ -185,6 +194,41 @@ export interface DocumentSummary {
   version: number;
   chunk_count: number;
   superseded_at: string | null;
+  created_at: string;
+}
+
+export interface Span {
+  id: string;
+  trace_id: string;
+  span_id: string;
+  name: string;
+  duration_ms: number;
+  status: string;
+  token_cost: number | null;
+  attributes: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface Trace {
+  trace_id: string;
+  started_at: string;
+  total_duration_ms: number;
+  status: string;
+  span_count: number;
+  spans: Span[];
+}
+
+export interface AuditEntry {
+  id: string;
+  user_email: string;
+  connector_id: string;
+  sql: string;
+  question: string | null;
+  allowed: boolean;
+  denial_reason: string | null;
+  row_count: number | null;
+  duration_ms: number | null;
+  trace_id: string | null;
   created_at: string;
 }
 
