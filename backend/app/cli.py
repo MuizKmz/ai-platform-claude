@@ -66,7 +66,7 @@ def _create_user(tenant_slug: str, email: str, roles: list[str], labels: list[st
     print(f"created user {email}: {user_id}")
 
 
-def _token(tenant_slug: str, email: str) -> None:
+def _token(tenant_slug: str, email: str, *, mcp: bool = False) -> None:
     """Mint a token for an existing user.
 
     Claims are read from the database, never from the command line. A token whose
@@ -86,6 +86,15 @@ def _token(tenant_slug: str, email: str) -> None:
     if row is None:
         sys.exit(f"no such user: {email} in tenant {tenant_slug}")
 
+    # An MCP token carries a different audience, so a token minted for the
+    # console cannot be used as a machine credential against the MCP server.
+    # That separation is RFC 8707 and the spec's no-passthrough rule.
+    audience = None
+    if mcp:
+        from app.mcp.auth import mcp_audience
+
+        audience = mcp_audience()
+
     print(
         issue_token(
             tenant_id=row.tenant_id,
@@ -93,6 +102,7 @@ def _token(tenant_slug: str, email: str) -> None:
             email=row.email,
             roles=tuple(row.roles),
             allowed_labels=tuple(row.allowed_labels),
+            audience=audience,
         )
     )
 
@@ -225,6 +235,11 @@ def main() -> None:
     p = sub.add_parser("token")
     p.add_argument("tenant_slug")
     p.add_argument("email")
+    p.add_argument(
+        "--mcp",
+        action="store_true",
+        help="mint a token for the MCP server rather than the API",
+    )
 
     p = sub.add_parser("reindex")
     p.add_argument("tenant_slug")
@@ -257,7 +272,7 @@ def main() -> None:
             _split_csv(args.labels),
         )
     elif args.command == "token":
-        _token(args.tenant_slug, args.email)
+        _token(args.tenant_slug, args.email, mcp=args.mcp)
     elif args.command == "reindex":
         _reindex(args.tenant_slug)
     elif args.command == "ingest":

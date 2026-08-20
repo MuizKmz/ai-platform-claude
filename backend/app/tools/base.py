@@ -154,6 +154,16 @@ class ToolRegistry:
             specs.append(tool.spec)
         return specs
 
+    def get_registered(self, tenant_id: uuid.UUID, name: str) -> Tool | None:
+        """The tool object, or None. For inspecting what a tool IS.
+
+        Says nothing about whether anyone may use it — `invoke` remains the only
+        thing that decides that. Added so callers that need to know a tool's
+        type (the MCP bridge excludes write tools by type) do not have to reach
+        into the registry's internals.
+        """
+        return self._by_tenant.get(tenant_id, {}).get(name)
+
     def is_registered(self, tenant_id: uuid.UUID, name: str) -> bool:
         """Whether a tool of this name exists for the tenant.
 

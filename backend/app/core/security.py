@@ -62,6 +62,7 @@ def issue_token(
     roles: tuple[str, ...] = (),
     allowed_labels: tuple[str, ...] = (),
     expires_in: timedelta | None = None,
+    audience: str | None = None,
 ) -> str:
     """Mint a development token.
 
@@ -75,7 +76,11 @@ def issue_token(
         # OIDC-standard claims.
         "sub": str(user_id),
         "iss": settings.jwt_issuer,
-        "aud": settings.jwt_audience,
+        # The MCP server requires its own audience (RFC 8707): a token for the
+        # platform API must not be usable as a machine credential for a
+        # different surface. Callers pass one explicitly; the default is the
+        # API, so no existing call site changes.
+        "aud": audience or settings.jwt_audience,
         "iat": now,
         "exp": now + ttl,
         # Namespaced private claims. An unprefixed "tenant_id" risks colliding with

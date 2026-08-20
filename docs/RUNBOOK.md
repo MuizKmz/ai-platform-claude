@@ -136,6 +136,36 @@ authorised it, which is where it belongs.
 row stays `executed` and gains a `compensated_at` — "done and then undone" and
 "never happened" are different facts.
 
+### Connecting an MCP client
+
+Claude Desktop, an IDE, or another agent can use the read-only tools. It needs a
+token minted for the **MCP audience**, which is deliberately not the console's:
+
+```powershell
+cd backend
+uv run python -m app.cli token acme dana@acme.test --mcp
+```
+
+A console token is refused here and an MCP token is refused by the console. That
+separation is RFC 8707, and it stops a browser-session token doubling as a
+machine credential.
+
+Endpoint: `POST http://127.0.0.1:8000/mcp` with `Authorization: Bearer <token>`.
+Discovery: `GET /.well-known/oauth-protected-resource`.
+
+Try it by hand:
+
+```powershell
+$tok = uv run python -m app.cli token acme dana@acme.test --mcp
+curl.exe -s -X POST http://127.0.0.1:8000/mcp -H "Authorization: Bearer $tok" `
+  -H "Content-Type: application/json" `
+  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'
+```
+
+**Write tools are never exposed over MCP.** An MCP client has no approval queue
+and no way to show a payload to a human, so a tool that creates approval
+requests would produce proposals nobody initiated a review for.
+
 ### Checking spend
 
 ```powershell

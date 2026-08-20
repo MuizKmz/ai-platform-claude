@@ -41,6 +41,18 @@ is unchanged.
 Do not add an autonomous write path, a "trusted agent" tier, or bulk operations. If a
 change makes `execute_approved` reachable from the agent, the phase's guarantee is gone.
 
+**Phase 10 complete — MCP at the edge.** A second front door onto the same tools, spoken
+as JSON-RPC over HTTP (ADR 0007, implemented directly rather than with the SDK).
+
+*One chokepoint, two front doors.* `app/mcp/server.py` calls
+`registry.invoke(principal, name, **arguments)` — the same function the agent calls, not
+a copy of it. A surface with its own authorization is a second security model.
+
+MCP has its **own audience** (RFC 8707): a console token is refused by the MCP server and
+vice versa. The token is verified, used to derive a Principal, and dropped — never
+attached to anything outbound. Write tools are excluded by TYPE, not by name, because an
+MCP client has no approval queue.
+
 Tool authorization is re-checked at every invocation in `tools/base.py`. Never cache it,
 never trust what the model requested, and never let a tool be invoked outside
 `ToolRegistry.invoke`.
