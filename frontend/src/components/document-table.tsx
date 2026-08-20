@@ -128,6 +128,7 @@ export function DocumentTable({
                       </Badge>
                     ))
                   )}
+                  <PIIBadge summary={doc.pii_summary} />
                 </div>
               </TableCell>
 
@@ -162,5 +163,47 @@ export function DocumentTable({
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+/**
+ * What the ingestion scan found in a document.
+ *
+ * Sits beside the labels deliberately: the two answer one question together —
+ * "this file carries 4,000 email addresses, and it is labelled `public`" is a
+ * sentence someone should read before it is true for long.
+ *
+ * Counts, never values. The API returns no examples, so there is nothing here
+ * that could put the PII back into the page built to warn about it.
+ */
+function PIIBadge({ summary }: { summary: Record<string, number> }) {
+  const kinds = Object.entries(summary ?? {});
+  if (kinds.length === 0) return null;
+
+  const total = kinds.reduce((sum, [, count]) => sum + count, 0);
+  const detail = kinds
+    .map(([kind, count]) => `${count} ${kind.replace(/_/g, " ")}`)
+    .join(", ");
+
+  // Credentials and government identifiers are a different severity from a
+  // phone number in a handbook, and flattening them to one colour would lose
+  // the only distinction that changes what someone does next.
+  const severe = kinds.some(([kind]) =>
+    ["api_key", "ssn", "credit_card", "iban"].includes(kind),
+  );
+
+  return (
+    <Badge
+      variant="outline"
+      className={
+        severe
+          ? "border-destructive/50 text-destructive h-5 px-1.5 text-[10px] font-normal"
+          : "text-muted-foreground h-5 px-1.5 text-[10px] font-normal"
+      }
+      title={`Detected at ingestion: ${detail}. Check this document's labels.`}
+    >
+      {severe ? "⚠ " : ""}
+      {total} PII
+    </Badge>
   );
 }

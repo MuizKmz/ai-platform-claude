@@ -29,6 +29,10 @@ class DocumentOut(BaseModel):
     chunk_count: int
     superseded_at: datetime | None
     created_at: datetime
+    # Counts by kind from the ingestion scan: {"email": 4000}. Counts, never
+    # values — this exists so an operator can see what a document carries
+    # before deciding who may read it.
+    pii_summary: dict[str, int]
 
 
 class DeleteOut(BaseModel):
@@ -51,7 +55,7 @@ def list_documents(
     rows = db.execute(
         text("""
             SELECT d.id, d.title, d.source_path, d.labels, d.version,
-                   d.superseded_at, d.created_at,
+                   d.superseded_at, d.created_at, d.pii_summary,
                    (SELECT count(*) FROM chunk c WHERE c.document_id = d.id) AS chunk_count
             FROM document d
             WHERE d.tenant_id = :t
@@ -76,6 +80,7 @@ def list_documents(
             chunk_count=row.chunk_count,
             superseded_at=row.superseded_at,
             created_at=row.created_at,
+            pii_summary=dict(row.pii_summary or {}),
         )
         for row in rows
     ]

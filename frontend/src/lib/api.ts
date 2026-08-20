@@ -264,6 +264,10 @@ export interface DocumentSummary {
   chunk_count: number;
   superseded_at: string | null;
   created_at: string;
+  /** Counts by kind from the ingestion scan: {"email": 4000}. Counts, never
+   *  values — it exists so an operator can see what a document carries before
+   *  deciding who may read it. */
+  pii_summary: Record<string, number>;
 }
 
 export interface AgentToolCall {

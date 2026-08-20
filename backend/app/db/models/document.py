@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import ARRAY, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, created_at, uuid_pk
@@ -38,6 +39,18 @@ class Document(Base):
     source_path: Mapped[str]
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
     labels: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+
+    # What the PII scan found at ingestion, as counts by kind:
+    # {"email": 4000, "credit_card": 2}.
+    #
+    # Counts, never values — carrying examples would put the PII into the very
+    # metadata written to make it visible. Recorded rather than acted upon:
+    # ingestion does not refuse a document for containing people, because
+    # enterprise documents contain people and refusing them would refuse the
+    # product. This makes the labelling decision an informed one.
+    pii_summary: Mapped[dict[str, int]] = mapped_column(
+        JSONB, default=dict, server_default="{}", nullable=False
+    )
 
     # Versioning. A document is identified across revisions by source_path within
     # a tenant; each new revision increments version and tombstones the old one.

@@ -12,6 +12,7 @@ duplicate chunks crowd out distinct results in the top-k.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.pii import summarise
 from app.knowledge.chunking import chunk_blocks
 from app.knowledge.embedding import EmbeddingProvider
 from app.knowledge.lifecycle import find_live_by_source, supersede_document
@@ -120,11 +122,26 @@ def ingest_file(
         result.documents_skipped += 1
         return
 
+    # Scanned, recorded, and NOT acted upon. This platform exists to answer
+    # questions about enterprise documents, and enterprise documents contain
+    # people — an HR handbook naming an employee, a support export full of
+    # customer addresses. Refusing those would refuse the product.
+    #
+    # What this buys is an informed labelling decision: an operator can see that
+    # a file carries 4,000 email addresses before choosing who may read it.
+    # Counts only; carrying examples would put the PII into the very metadata
+    # written to make it visible.
+    pii_summary = summarise("\n".join(chunk.content for chunk in chunks))
+    if pii_summary:
+        logger.info("%s contains PII: %s — check its labels", path.name, pii_summary)
+
     document_id = session.execute(
         text("""
             INSERT INTO document
-              (id, tenant_id, title, source_path, content_hash, labels, version)
-            VALUES (:id, :t, :title, :src, :hash, :labels, :version)
+              (id, tenant_id, title, source_path, content_hash, labels, version,
+               pii_summary)
+            VALUES (:id, :t, :title, :src, :hash, :labels, :version,
+                    CAST(:pii AS jsonb))
             RETURNING id
         """),
         {
@@ -135,6 +152,7 @@ def ingest_file(
             "hash": content_hash,
             "labels": labels,
             "version": (previous[1] + 1) if previous else 1,
+            "pii": json.dumps(pii_summary),
         },
     ).scalar()
 

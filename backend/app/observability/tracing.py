@@ -24,6 +24,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.pii import redact
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,7 +42,23 @@ class Span:
     attributes: dict[str, Any] = field(default_factory=dict)
 
     def set_attribute(self, key: str, value: Any) -> None:
-        self.attributes[key] = value
+        """Record an attribute, redacting any PII in it.
+
+        Redaction happens HERE rather than at each call site, because this is
+        the one place every attribute passes through. A call site that forgets
+        is the normal case — there are dozens, and more arrive every phase — so
+        the choke point has to be the thing that remembers.
+
+        A trace is worth protecting precisely because it is easy to forget: it
+        is a second copy of tenant data, retained on a different clock from the
+        conversation it describes, and readable by admins who may hold none of
+        the labels that gated the original.
+
+        Only strings are scanned. Numbers and booleans are what belongs here —
+        counts, durations, costs — and a caller passing a whole object is a
+        design problem this cannot fix.
+        """
+        self.attributes[key] = redact(value) if isinstance(value, str) else value
 
 
 def new_trace_id() -> str:
