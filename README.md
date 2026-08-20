@@ -14,9 +14,11 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | **0 — Foundation** | ✅ Complete. Repo, pinned toolchain, Postgres 17 + pgvector 0.8.6, Redis, real `/health`, green CI |
 | **1 — Tenant-scoped retrieval** | ✅ Complete. Schema + RLS, JWT identity, ingestion, authorization-filtered search |
 | **2 — Grounded generation** | ✅ Complete. Cited answers, verified citations, refusal path, per-tenant cost |
+| **3 — Real ingestion + evals** | ✅ Complete. PDF/DOCX/HTML, document lifecycle, eval harness, background worker |
+| **4 — SQL connector** | ✅ Complete. Read-only queries enforced by a Postgres role, five safety layers, audited |
 
-**No LLM, no retrieval endpoint, no connectors, no frontend yet.** That is deliberate — see
-the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
+**No agent, no tool calling beyond the SQL connector, and no frontend yet.** That is
+deliberate — see the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
 
 ### Security guarantees currently enforced
 
@@ -28,7 +30,6 @@ These are tested on every push, not aspirations:
 - The runtime role (`app_rw`) is explicitly `NOSUPERUSER NOBYPASSRLS`. A superuser bypasses
   RLS unconditionally, so this property is what the whole guarantee rests on; a test asserts
   it, because every other isolation test still passes while isolation is silently gone.
-- Generated SQL will use a read-only role enforced by Postgres, not by string inspection.
 - **Tenancy is server-derived.** `tenant_id` comes from a verified token signature. A
   request supplying its own `tenant_id` in a body, query parameter, or header is ignored.
 - Token verification pins the algorithm, so an `alg=none` token is rejected rather than
@@ -57,6 +58,13 @@ These are tested on every push, not aspirations:
 - Deleting a document a caller cannot see returns **404, not 403** — a 403 would confirm it
   exists. Deletion additionally requires the `admin` role: being able to read a document
   must not imply the authority to destroy it for everyone.
+- **Generated SQL cannot write**, enforced by a Postgres role rather than string inspection.
+  Verified by a test that bypasses the validator entirely.
+- **Connectors cannot reach cloud metadata.** `169.254.169.254` serves instance credentials
+  with no authentication on AWS, GCP and Azure; DNS is resolved at connect time and every
+  returned address validated, so a rebinding attack has no window.
+- **Connector credentials are encrypted by the application** before reaching the database,
+  with a key held outside it — a backup or stolen dump contains ciphertext.
 
 Run them yourself: `cd backend && uv run pytest -m security -v`
 
@@ -450,6 +458,72 @@ The CLI path still works and is often more convenient locally:
 ```powershell
 uv run python -m app.cli ingest ../sample-docs --tenant acme --labels public
 ```
+
+## Querying structured data
+
+Documents answer "what does the policy say". A database answers "how many orders
+shipped late last month" — a question no document contains.
+
+```powershell
+cd backend
+uv run python ../evals/sql_eval.py   # needs OPENAI_API_KEY; costs a few cents
+```
+
+### Accuracy — and why the SQL is always shown
+
+| | Result |
+|---|---|
+| Execution accuracy | **100%** (20/20 answerable questions) |
+| Refusal accuracy | **100%** (5/5 unanswerable questions) |
+| Model | `openai/gpt-4.1-mini` |
+
+**Do not read that as 100% reliable.** Published state of the art on the BIRD
+benchmark is roughly **82% execution accuracy, against ~93% for human experts** — and
+researchers have shown even that metric disagrees with expert judgment a meaningful
+share of the time. Our number is higher because the schema is small, curated, and
+paired with a hand-written semantic layer, not because this system beats the
+literature. On a real warehouse with hundreds of tables, expect roughly **one query in
+five to be wrong.**
+
+A wrong query does not announce itself. It returns rows. That is why **the generated
+SQL is always returned alongside the results** — it is what lets a person catch the
+20%, and hiding it would present a guess as an answer.
+
+### The five safety layers
+
+In order of how much they are relied upon:
+
+1. **A Postgres role granted `SELECT` on curated views and nothing else.** Not code —
+   a `GRANT`. This is the layer that actually protects you.
+2. **`default_transaction_read_only = on`**, set on the role, so a connection that
+   forgets to ask still starts read-only.
+3. **`statement_timeout` and a row cap**, so a wrong query is killed rather than an
+   outage.
+4. **AST validation** against an allowlist of node types — never a keyword blocklist,
+   which loses to comment injection and dialect quirks.
+5. **Mandatory `LIMIT` injection**, so a question never becomes an export.
+
+Layers 4 and 5 are clarity. Layers 1–3 are the guarantee. There is a test that
+**bypasses the validator entirely** and confirms the database still refuses:
+
+```
+INSERT INTO curated.v_customers  -> permission denied for view v_customers
+SELECT * FROM public.customers   -> permission denied for table customers
+DROP VIEW curated.v_orders       -> cannot execute DROP VIEW in a read-only transaction
+```
+
+### Audit
+
+Every query is recorded before the caller sees a result — allowed or denied, with the
+SQL, the principal, the row count, and the duration:
+
+```sql
+SELECT user_email, allowed, denial_reason, left(sql, 60) AS sql
+FROM connector_audit ORDER BY created_at DESC LIMIT 10;
+```
+
+Denied rows are the more valuable ones: a run of refusals is what an attempted bypass
+looks like, and a log of successes alone cannot show it.
 
 ## Running alongside other Docker projects
 

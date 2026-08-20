@@ -6,12 +6,14 @@ not current state. This file is current state.
 
 ## Current phase
 
-**Phase 2 complete — grounded generation.** Schema with RLS, JWT identity, ingestion,
-authorization-filtered search, and `POST /v1/chat` returning cited answers with
-server-verified citations, a refusal path, and per-tenant cost accounting.
+**Phase 4 complete — SQL connector.** Everything through grounded generation, plus
+PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-only SQL
+connector whose write-refusal is enforced by a Postgres role rather than by inspecting
+strings.
 
-There is still **no agent, no tool calling, no connector, and no frontend**. Do not add
-them. Phase 3 is real ingestion (PDF/DOCX) plus the evaluation harness.
+There is still **no agent, no REST connector, and no frontend**. Do not add them.
+Phase 5 is a REST connector (GET only), which also validates the Connector ABC against
+a second implementation.
 See [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for what each phase unlocks.
 
 ## How to run
@@ -65,7 +67,9 @@ These are not features and are never deferred to "later". Violating one is a blo
 2. **Every row of tenant data carries `tenant_id`.** Every query filters on it. No exceptions.
 3. **Retrieval is authorization-filtered before ranking**, not after. Never retrieve then hide.
 4. **Database access for generated SQL is read-only**, enforced by a Postgres role, not by
-   string inspection. Write operations are forbidden until Phase 9.
+   string inspection. Write operations are forbidden until Phase 9. The test that proves
+   this bypasses the AST validator entirely — if it ever passes, every other SQL safety
+   test is decoration.
 5. **No secrets in git, logs, traces, prompts, or responses.** `.env` is gitignored; use
    `.env.example` as the template.
 6. **Every LLM/tool/retrieval call emits a trace** with a trace ID, latency, and token cost.

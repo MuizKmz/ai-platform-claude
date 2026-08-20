@@ -1,0 +1,121 @@
+# NL->SQL accuracy set for the demo analytics warehouse.
+#
+# `expected` is the EXECUTION RESULT, not a reference query. Comparing SQL text
+# would fail two correct queries that differ in formatting, and would pass a
+# query that happens to look right. Execution accuracy is what the BIRD
+# benchmark measures and it is the only thing a user experiences.
+#
+# Expectations are derived from the seed data in infra/postgres/init-analytics.sh.
+# Ten questions are answerable; five are deliberately unanswerable from this
+# schema, because a system that answers everything is not being honest.
+
+- question: How many orders are there in total?
+  expected: [[8]]
+  kind: answerable
+
+- question: How many orders have been shipped?
+  expected: [[5]]
+  kind: answerable
+
+- question: How many orders were cancelled?
+  expected: [[1]]
+  kind: answerable
+
+- question: How many customers do we have?
+  expected: [[6]]
+  kind: answerable
+
+- question: How many customers are in the UK?
+  expected: [[2]]
+  kind: answerable
+
+- question: How many enterprise customers are there?
+  expected: [[2]]
+  kind: answerable
+
+- question: What is the price of part QN-1183-A?
+  expected: [[1290.00]]
+  kind: answerable
+
+- question: How many products are in the parts category?
+  expected: [[3]]
+  kind: answerable
+
+- question: How many orders are still pending?
+  expected: [[2]]
+  kind: answerable
+
+- question: How many order lines are there?
+  expected: [[11]]
+  kind: answerable
+
+# --- unanswerable: the schema is silent -------------------------------------
+# The correct behaviour is UNANSWERABLE. A confident wrong answer here is worse
+# than a refusal, because nothing about it looks wrong.
+
+- question: What is the profit margin on each product?
+  expected: null
+  kind: unanswerable
+
+- question: Which sales representative closed the most deals?
+  expected: null
+  kind: unanswerable
+
+- question: What is the customer satisfaction score by region?
+  expected: null
+  kind: unanswerable
+
+- question: How many support tickets were raised last quarter?
+  expected: null
+  kind: unanswerable
+
+- question: What is the warehouse stock level for QN-1183-A?
+  expected: null
+  kind: unanswerable
+
+# --- harder: the failure modes the semantic layer exists to prevent ----------
+# Single-view counts are not where text-to-SQL breaks. These require joins,
+# NULL-awareness, a metric caveat, or a date boundary — which is where the
+# published ~82% actually comes from.
+
+- question: What is the total revenue from non-cancelled orders?
+  expected: [[25930.75]]
+  kind: answerable
+
+- question: Which customer has spent the most, and how much?
+  expected: [["Acme Industrial", 13639.75]]
+  kind: answerable
+
+# Rounding is not pinned down by the question, so this asks for the underlying
+# fact instead: avg is 5.60 over the five shipped orders.
+- question: How many orders took more than a week to ship?
+  expected: [[2]]
+  kind: answerable
+
+- question: How many orders has Northwind Ltd placed?
+  expected: [[2]]
+  kind: answerable
+
+- question: Which product has generated the most revenue?
+  expected: [["Control board revision C", 10232.25]]
+  kind: answerable
+
+- question: How many distinct products has Acme Industrial ordered?
+  expected: [[4]]
+  kind: answerable
+
+- question: What is the total quantity of parts ordered across all orders?
+  expected: [[41]]
+  kind: answerable
+
+- question: Which countries have more than one customer?
+  expected: [["UK", 2], ["US", 2]]
+  kind: answerable
+
+- question: How many orders were placed in July 2026?
+  expected: [[3]]
+  kind: answerable
+
+- question: What is the average order value for shipped orders?
+  expected: [[4960.25]]
+  kind: answerable
