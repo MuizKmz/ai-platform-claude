@@ -111,6 +111,20 @@ class Settings(BaseSettings):
     # and the agent are the expensive paths; search and listing are not.
     llm_requests_per_minute: int = 30
 
+    # --- Writes (Phase 9) --------------------------------------------------
+    # Write tools enabled by name, comma-separated. EMPTY BY DEFAULT, which
+    # means no write tool exists at all — the correct posture for a deployment
+    # that has not thought about it.
+    #
+    # Enabling one does not enable writing: a write tool can only propose, and
+    # a proposal still needs a named human to approve it. This flag decides
+    # whether the agent may put anything in the queue.
+    enabled_write_tools: str = ""
+
+    @property
+    def write_tool_list(self) -> list[str]:
+        return [name.strip() for name in self.enabled_write_tools.split(",") if name.strip()]
+
     # --- Console ----------------------------------------------------------
     # Origins the browser console is served from. An ALLOWLIST, never "*":
     # this API is authenticated by a bearer token, and a wildcard origin would
