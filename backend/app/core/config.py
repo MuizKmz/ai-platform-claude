@@ -89,6 +89,20 @@ class Settings(BaseSettings):
     # Required with no default: a shared default key protects nobody.
     credential_encryption_key: str = ""
 
+    # --- Console ----------------------------------------------------------
+    # Origins the browser console is served from. An ALLOWLIST, never "*":
+    # this API is authenticated by a bearer token, and a wildcard origin would
+    # let any site a user visits read their tenant's data using the token their
+    # browser is holding.
+    #
+    # Comma-separated so it stays one environment variable across environments.
+    cors_origins: str = "http://localhost:3000,http://localhost:3001"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:

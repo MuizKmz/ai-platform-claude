@@ -61,6 +61,7 @@ jobs:
       # Not a real secret: CI encrypts and decrypts within the job and stores
       # nothing. A production key comes from a secret manager.
       CREDENTIAL_ENCRYPTION_KEY: ci-only-credential-key-not-used-anywhere-else
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001
 
     steps:
       - uses: actions/checkout@v6
