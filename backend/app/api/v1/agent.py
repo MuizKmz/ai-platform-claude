@@ -68,6 +68,12 @@ class ToolCallOut(BaseModel):
     content: str
     error: str | None
     duration_ms: float
+    # Whether the platform refused the call. Carried as its own field rather
+    # than left for a caller to infer from the error text: a model asking for a
+    # tool it is not authorized to use is the security-relevant case, and a
+    # client that detects it by substring-matching an exception message breaks
+    # silently the day that message is reworded.
+    denied: bool = False
 
 
 class AgentResponse(BaseModel):
@@ -222,6 +228,7 @@ def ask_agent(
                 content=call.content,
                 error=call.error,
                 duration_ms=round(call.duration_ms, 2),
+                denied=bool(call.metadata.get("denied")),
             )
             for call in run.tool_calls
         ],

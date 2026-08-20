@@ -9,6 +9,7 @@ import {
   FileText,
   LogOut,
   MessagesSquare,
+  Sparkles,
   Terminal,
 } from "lucide-react";
 
@@ -32,6 +33,7 @@ import { ApiError, type Principal, api, clearToken, getToken } from "@/lib/api";
 
 const NAV = [
   { href: "/chat", label: "Chat", icon: MessagesSquare },
+  { href: "/agent", label: "Agent", icon: Sparkles },
   { href: "/knowledge", label: "Knowledge", icon: FileText },
   { href: "/integrations", label: "Integrations", icon: Database },
   { href: "/traces", label: "Traces", icon: Activity },

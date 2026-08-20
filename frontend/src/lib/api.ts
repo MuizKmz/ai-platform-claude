@@ -134,6 +134,20 @@ export const api = {
       body: JSON.stringify({ directory, labels }),
     }),
 
+  // --- agent ----------------------------------------------------------------
+
+  /** Ask a question that may need more than one source.
+   *
+   * The backend routes simple questions straight to grounded generation, so
+   * this is not more expensive than /v1/chat for a single-source question —
+   * `routed_directly` in the response says which path was taken.
+   */
+  agent: (question: string, forceAgent = false) =>
+    request<AgentResponse>("/v1/agent", {
+      method: "POST",
+      body: JSON.stringify({ question, force_agent: forceAgent }),
+    }),
+
   // --- observability --------------------------------------------------------
   // Admin-only. Both endpoints return records ABOUT users rather than for
   // them, and the API enforces the role — this client does not pre-check it.
@@ -198,6 +212,34 @@ export interface DocumentSummary {
   chunk_count: number;
   superseded_at: string | null;
   created_at: string;
+}
+
+export interface AgentToolCall {
+  tool: string;
+  arguments: Record<string, unknown>;
+  /** What the tool returned. Shown for the same reason citations are: an agent
+   *  answer is only checkable if you can see what it was built from. */
+  content: string;
+  error: string | null;
+  duration_ms: number;
+  /** True when the platform refused the call. Sent as its own field so the UI
+   *  never has to detect an authorization failure by matching error text. */
+  denied: boolean;
+}
+
+export interface AgentResponse {
+  question: string;
+  answer: string | null;
+  /** Set when a run ended without an answer — a limit, a failure, a refusal.
+   *  Distinct from `answer` so the UI can tell "here it is" from "here is why
+   *  there isn't one". */
+  halted_reason: string | null;
+  tool_calls: AgentToolCall[];
+  steps: number;
+  cost_usd: number;
+  trace_id: string;
+  /** True when the question was answered without the agent. */
+  routed_directly: boolean;
 }
 
 export interface Span {
