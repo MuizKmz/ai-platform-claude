@@ -58,6 +58,9 @@ jobs:
       JWT_ISSUER: https://eaip.local
       JWT_AUDIENCE: eaip-api
       JWT_TTL_MINUTES: 60
+      # Not a real secret: CI encrypts and decrypts within the job and stores
+      # nothing. A production key comes from a secret manager.
+      CREDENTIAL_ENCRYPTION_KEY: ci-only-credential-key-not-used-anywhere-else
 
     steps:
       - uses: actions/checkout@v6

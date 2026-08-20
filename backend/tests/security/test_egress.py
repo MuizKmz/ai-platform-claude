@@ -9,6 +9,7 @@ is refusing to make the connection.
 from __future__ import annotations
 
 import socket
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
@@ -181,7 +182,20 @@ def test_out_of_range_ports_are_refused(port: int) -> None:
 # --- credentials --------------------------------------------------------------
 
 
-def test_credentials_round_trip() -> None:
+@pytest.fixture
+def configured_key() -> Iterator[None]:
+    """Pin a known encryption key for the duration of a test.
+
+    These tests assert properties of encryption, not of configuration. Relying
+    on a developer's .env made them pass locally and fail in CI, where the key
+    was unset — the tests were silently exercising the setup-error path instead.
+    """
+    with patch("app.connectors.credentials.settings") as fake_settings:
+        fake_settings.credential_encryption_key = "a-test-key-of-sufficient-length"
+        yield
+
+
+def test_credentials_round_trip(configured_key: None) -> None:
     secret = SecretStr("hunter2-database-password")
 
     ciphertext = encrypt(secret)
@@ -190,7 +204,7 @@ def test_credentials_round_trip() -> None:
     assert recovered.get_secret_value() == secret.get_secret_value()
 
 
-def test_ciphertext_does_not_contain_the_plaintext() -> None:
+def test_ciphertext_does_not_contain_the_plaintext(configured_key: None) -> None:
     """The stored value is what ends up in a backup or a stolen dump."""
     ciphertext = encrypt(SecretStr("hunter2-database-password"))
 
@@ -211,7 +225,7 @@ def test_credentials_never_in_logs_or_traces() -> None:
         assert "*" in rendering
 
 
-def test_tampered_ciphertext_is_refused() -> None:
+def test_tampered_ciphertext_is_refused(configured_key: None) -> None:
     """Fernet authenticates, so a modified token fails rather than decrypting to
     something plausible."""
     ciphertext = encrypt(SecretStr("original-password"))
@@ -222,11 +236,22 @@ def test_tampered_ciphertext_is_refused() -> None:
 
 
 def test_decryption_failure_says_nothing_useful() -> None:
-    """An attacker probing with guessed ciphertext learns only that it failed."""
-    with pytest.raises(CredentialError) as exc:
-        decrypt("not-a-valid-token")
+    """An attacker probing with guessed ciphertext learns only that it failed.
+
+    A configured key is required for this to test what it claims. Without one,
+    decrypt() raises the setup error instead and the assertions below would be
+    inspecting the wrong message — which is exactly what happened in CI, where
+    the key was unset.
+    """
+    with patch("app.connectors.credentials.settings") as fake_settings:
+        fake_settings.credential_encryption_key = "a-key-that-is-definitely-configured"
+
+        with pytest.raises(CredentialError) as exc:
+            decrypt("not-a-valid-token")
 
     message = str(exc.value).lower()
+    assert "could not be decrypted" in message
+    # Nothing about the key, the cipher, or which check failed.
     assert "key" not in message
     assert "fernet" not in message
 
