@@ -35,12 +35,20 @@ _CITATION = re.compile(r"\[(\d+)\]")
 
 @dataclass(frozen=True)
 class Citation:
-    """A verified reference from an answer back to a retrieved chunk."""
+    """A verified reference from an answer back to a retrieved chunk.
+
+    Carries the chunk text, not merely its id. A citation exists so a reader
+    can check whether the claim is actually supported, and an identifier they
+    would have to paste into a database to resolve is a label rather than
+    evidence. The text is already in hand here — it was just retrieved — so
+    withholding it would save nothing and cost the whole point.
+    """
 
     index: int
     chunk_id: str
     document_id: str
     document_title: str
+    content: str
 
 
 @dataclass(frozen=True)
@@ -104,6 +112,7 @@ def verify_citations(
             chunk_id=str(hits[index - 1].chunk_id),
             document_id=str(hits[index - 1].document_id),
             document_title=hits[index - 1].document_title,
+            content=hits[index - 1].content,
         )
         for index in kept
     )

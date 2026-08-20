@@ -170,6 +170,9 @@ export interface Citation {
   chunk_id: string;
   document_id: string;
   document_title: string;
+  /** The passage the claim came from. Returned inline so checking an answer
+   *  does not require a second request. */
+  content: string;
 }
 
 export interface ChatResponse {

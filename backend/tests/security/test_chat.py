@@ -398,3 +398,22 @@ def test_cannot_attach_to_another_tenants_conversation(
     ).json()
 
     assert body["conversation_id"] != str(foreign_id)
+
+
+def test_citations_carry_the_source_passage(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A citation must be checkable, which means carrying its text.
+
+    An identifier the reader would have to paste into a database resolves to
+    evidence in principle and to nothing in practice. The text is already in
+    hand when the citation is built, so withholding it saves nothing.
+    """
+    _use(monkeypatch, FakeLLM(response="Refunds take five business days [1]."))
+
+    body = client.post("/v1/chat", json={"question": CONTENT}, headers=_headers()).json()
+
+    citation = body["citations"][0]
+    assert citation["content"]
+    # And it is the chunk that was actually retrieved, not a summary of it.
+    assert citation["content"] == CONTENT

@@ -48,6 +48,10 @@ class CitationOut(BaseModel):
     chunk_id: str
     document_id: str
     document_title: str
+    # The passage the claim came from. Returned inline rather than behind a
+    # second request: a reader deciding whether to trust an answer should not
+    # have to make another round trip to see the evidence for it.
+    content: str
 
 
 class ChatResponse(BaseModel):
@@ -195,6 +199,7 @@ def chat(
             chunk_id=c.chunk_id,
             document_id=c.document_id,
             document_title=c.document_title,
+            content=c.content,
         )
         for c in answer.citations
     ]

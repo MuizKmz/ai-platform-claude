@@ -202,11 +202,19 @@ function CitationCard({
       </button>
 
       {open ? (
-        // The chunk id is shown because it is the thing you would paste into a
-        // query when checking an answer by hand.
-        <p className="text-muted-foreground mt-2 border-t border-border/40 pt-2 font-mono text-[11px] break-all">
-          chunk {citation.chunk_id}
-        </p>
+        <div className="border-border/40 mt-2 space-y-2 border-t pt-2">
+          {/* The passage itself, which is what makes a citation evidence
+              rather than a label. A reader deciding whether to trust an answer
+              can see the text it was drawn from. */}
+          <p className="text-foreground/85 text-xs leading-relaxed whitespace-pre-wrap">
+            {citation.content}
+          </p>
+          {/* The id stays, below and dimmed: it is what you would paste into a
+              query to check this by hand, but it is not the thing you read. */}
+          <p className="text-muted-foreground/60 font-mono text-[10px] break-all">
+            chunk {citation.chunk_id}
+          </p>
+        </div>
       ) : null}
     </li>
   );
