@@ -7,7 +7,16 @@
 # tables, not another schema, not the eaip database.
 set -euo pipefail
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<SQL
+# Runs in two places: inside the Postgres container at init (where psql connects
+# over the local socket) and from CI (where it must reach a service container
+# over TCP). PGHOST is set by the caller in the second case and empty in the
+# first, and psql treats an empty PGHOST as "use the socket".
+PSQL="psql -v ON_ERROR_STOP=1 --username ${POSTGRES_USER}"
+if [ -n "${PGHOST:-}" ]; then
+  PSQL="${PSQL} --host ${PGHOST} --port ${PGPORT:-5432}"
+fi
+
+$PSQL --dbname postgres <<SQL
 SELECT 'CREATE DATABASE analytics'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'analytics')
 \gexec

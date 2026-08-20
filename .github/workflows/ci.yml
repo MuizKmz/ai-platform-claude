@@ -97,6 +97,19 @@ jobs:
         run: |
           psql -h localhost -p 5432 -U eaip -d eaip             -c "CREATE ROLE app_readonly LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'ci-readonly-password'"
 
+      - name: Provision the analytics database
+        # infra/postgres/init-analytics.sh runs only on a fresh Docker volume,
+        # and a CI service container never runs init scripts at all. Without
+        # this, 47 connector security tests skip — and a skipped security test
+        # reports green while proving nothing.
+        env:
+          PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_READONLY_PASSWORD: ${{ env.POSTGRES_READONLY_PASSWORD }}
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          PGHOST: localhost
+          PGPORT: "5432"
+        run: bash ../infra/postgres/init-analytics.sh
+
       - name: Apply migrations
         run: uv run alembic upgrade head
 
