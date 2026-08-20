@@ -11,8 +11,14 @@ PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-onl
 connector whose write-refusal is enforced by a Postgres role rather than by inspecting
 strings.
 
-There is still **no agent and no frontend**. Do not add them. Phase 6 is the
-integration console — the first frontend.
+**Phase 6 in progress:** the integration console. Next.js + Tailwind + shadcn/ui,
+dark by default (ADR 0004).
+
+There is still **no agent**. Do not add one — that is Phase 7.
+
+The frontend is a **pure API client**. All backend calls go through
+`frontend/src/lib/api.ts`; business logic in a route handler means two backends,
+and the authorization guarantees live behind the API where RLS enforces them.
 
 `connectors/base.py` is pinned by `test_connector_abc_unchanged`. Two implementations
 now share it unmodified; if a third requires editing it, reconsider the design rather
@@ -26,6 +32,10 @@ docker compose up -d          # Postgres 17 + pgvector, Redis 7
 cd backend
 uv sync                       # installs into .venv from uv.lock
 uv run uvicorn app.main:app --reload
+
+cd ../frontend                # in a second terminal
+npm install
+npm run dev                   # http://localhost:3000
 ```
 
 Health check: http://127.0.0.1:8000/health — must report `db: ok` and `redis: ok`.

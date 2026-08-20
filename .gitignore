@@ -38,3 +38,9 @@ sample-docs/
 
 # Generated test fixtures — rebuilt by tests/fixtures/make_fixtures.py
 backend/tests/fixtures/documents/
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/.env*.local
