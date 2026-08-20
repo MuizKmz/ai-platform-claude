@@ -23,3 +23,18 @@ def uuid_pk() -> Mapped[uuid.UUID]:
 def created_at() -> Mapped[datetime]:
     """Server-side creation timestamp, so it cannot be backdated by the client."""
     return mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+def updated_at() -> Mapped[datetime]:
+    """Server-side modification timestamp.
+
+    `onupdate` fires on ORM flush; `server_default` covers rows written by raw
+    SQL. Both are set because this codebase uses both, and a timestamp that is
+    only right half the time is worse than none.
+    """
+    return mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

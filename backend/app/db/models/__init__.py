@@ -4,6 +4,7 @@ which is what Alembic autogenerate walks."""
 from app.db.models.agent_run import AgentRunRecord
 from app.db.models.audit import ConnectorAudit
 from app.db.models.chunk import Chunk
+from app.db.models.connector import ConnectorConfigRecord
 from app.db.models.conversation import Conversation, ConversationMessage
 from app.db.models.document import Document
 from app.db.models.ingest_job import IngestJob
@@ -15,6 +16,7 @@ __all__ = [
     "AgentRunRecord",
     "Chunk",
     "ConnectorAudit",
+    "ConnectorConfigRecord",
     "Conversation",
     "ConversationMessage",
     "Document",
