@@ -24,10 +24,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.api.deps import enforce_llm_limits
+from app.core.quota import record_spend
 from app.core.security import AuthError, Principal
 from app.db.session import SessionLocal
 from app.mcp.auth import (
@@ -49,6 +51,11 @@ PROTOCOL_VERSION = "2026-07-28"
 
 SERVER_INFO = {"name": "eaip", "version": "1.0.0"}
 
+# What one tool call is assumed to cost, for budgeting. Roughly an embedding
+# request plus overhead; deliberately a little high, because under-counting a
+# budget control is the failure that matters.
+ESTIMATED_TOOL_CALL_USD = 0.0002
+
 # JSON-RPC error codes. The last is ours; the rest are from the spec.
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
@@ -56,6 +63,8 @@ METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 UNAUTHORIZED = -32001
+RATE_LIMITED = -32002
+OVER_BUDGET = -32003
 
 
 def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
@@ -139,7 +148,39 @@ async def mcp_endpoint(
         return JSONResponse(_result(request_id, _list_tools(principal)))
 
     if method == "tools/call":
-        return JSONResponse(_result(request_id, _call_tool(principal, params)))
+        # Rate limit and daily budget, per tenant — the same controls the chat
+        # and agent endpoints carry.
+        #
+        # Found by probing: three MCP calls made real embedding requests and
+        # moved the quota by zero. An MCP client is a machine, it will call in
+        # a loop, and an unmetered front door onto metered tools makes the
+        # budget a setting rather than a control. Same class of hole as the
+        # streaming chat path in Phase 8.
+        try:
+            enforce_llm_limits(principal)
+        except HTTPException as exc:
+            code = RATE_LIMITED if exc.status_code == 429 else OVER_BUDGET
+            response = JSONResponse(
+                _error(request_id, code, str(exc.detail)), status_code=exc.status_code
+            )
+            for header, value in (exc.headers or {}).items():
+                response.headers[header] = value
+            return response
+
+        result = _call_tool(principal, params)
+
+        # Record what the call cost, so an MCP client draws down the same budget
+        # everything else does.
+        #
+        # An ESTIMATE, and labelled as one. Tools do not report their cost — the
+        # embedding provider does not price itself — and plumbing accounting
+        # through every tool is a larger change than this belongs in. A flat
+        # per-call figure is wrong in the third decimal and right about the
+        # thing that matters: a client calling in a loop exhausts the budget
+        # rather than running free.
+        record_spend(principal.tenant_id, ESTIMATED_TOOL_CALL_USD)
+
+        return JSONResponse(_result(request_id, result))
 
     return JSONResponse(
         _error(request_id, METHOD_NOT_FOUND, f"Method not found: {method}"),
@@ -203,10 +244,29 @@ def _call_tool(principal: Principal, params: dict[str, Any]) -> dict[str, Any]:
             )
             return result_to_mcp(f"You do not have access to {name!r}.", is_error=True)
 
+        # Only the parameters the tool declares. An MCP client is not our code,
+        # and forwarding whatever it sent means a tool's signature is the last
+        # thing standing between arbitrary keys and `run(**kwargs)`.
+        #
+        # Nothing was exploitable — labels and tenant come from the Principal,
+        # never from arguments — but a probe sending `__proto__` and `labels`
+        # reached the tool, and a filter at the boundary is better than a
+        # signature that happens to reject them.
+        spec = next(s for s in visible_tools(registry, principal) if s.name == name)
+        filtered = {k: v for k, v in arguments.items() if k in spec.parameters}
+        dropped = sorted(set(arguments) - set(filtered))
+        if dropped:
+            logger.info(
+                "mcp dropped undeclared arguments: tool=%s keys=%s tenant=%s",
+                name,
+                dropped,
+                principal.tenant_id,
+            )
+
         try:
             # THE line. Identical to the agent's call, against a Principal
             # derived the same way.
-            result = registry.invoke(principal, name, **arguments)
+            result = registry.invoke(principal, name, **filtered)
         except ToolAuthorizationError as exc:
             return result_to_mcp(str(exc), is_error=True)
         except ToolError as exc:

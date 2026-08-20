@@ -426,3 +426,127 @@ def test_ping_works_without_a_token(client: TestClient) -> None:
     result = _rpc(client, "ping")
     assert result["status"] == 200
     assert result["body"]["result"] == {}
+
+
+def test_undeclared_arguments_are_dropped(client: TestClient) -> None:
+    """Only parameters the tool declares reach it.
+
+    An MCP client is not our code. Found by probing: a call carrying
+    `__proto__`, `labels`, and `principal` alongside a real argument reached the
+    tool, where only the `**kwargs` signature stopped it mattering.
+
+    Nothing was exploitable — labels and tenant come from the Principal, never
+    from arguments — but a filter at the boundary is better than a signature
+    that happens to reject them.
+    """
+    principal = _principal()
+    result = _rpc(
+        client,
+        "tools/call",
+        _mcp_token(principal),
+        name="search_knowledge",
+        arguments={
+            "query": "refunds",
+            # Every one of these is undeclared and must be dropped.
+            "labels": ["finance", "secret"],
+            "principal": "admin",
+            "tenant_id": str(OTHER),
+            "__proto__": {"admin": True},
+        },
+    )
+
+    payload = result["body"]["result"]
+    # The call SUCCEEDS — the junk is dropped rather than the request refused,
+    # because a client sending a stray key should still get its answer.
+    assert payload["isError"] is False, payload["content"][0]["text"]
+    # And it did not reach another tenant.
+    assert "OTHER-TENANT-CANARY-4471" not in payload["content"][0]["text"]
+
+
+def test_a_declared_argument_still_reaches_the_tool(client: TestClient) -> None:
+    """The complement: filtering must not drop the real arguments."""
+    principal = _principal()
+    result = _rpc(
+        client,
+        "tools/call",
+        _mcp_token(principal),
+        name="search_knowledge",
+        arguments={"query": "refunds"},
+    )
+    payload = result["body"]["result"]
+    assert payload["isError"] is False
+    assert payload["content"][0]["text"].strip(), "the query produced nothing"
+
+
+# --- metering ------------------------------------------------------------------
+
+
+def test_an_mcp_tool_call_spends_the_tenant_budget(client: TestClient) -> None:
+    """MCP draws down the same budget everything else does.
+
+    Found by probing: three MCP calls made real embedding requests and moved the
+    quota by zero. An MCP client is a machine — it calls in a loop — and an
+    unmetered front door onto metered tools makes the budget a setting rather
+    than a control. The same class of hole as the streaming chat path in
+    Phase 8.
+    """
+    from app.core.quota import quota_status
+
+    principal = _principal()
+    before = quota_status(principal.tenant_id).spent_usd
+
+    _rpc(
+        client,
+        "tools/call",
+        _mcp_token(principal),
+        name="search_knowledge",
+        arguments={"query": "refunds"},
+    )
+
+    after = quota_status(principal.tenant_id).spent_usd
+    assert after > before, "an MCP tool call spent nothing against the budget"
+
+
+def test_an_over_budget_tenant_is_refused_over_mcp(client: TestClient) -> None:
+    """A tenant that has spent its allowance cannot route around it via MCP."""
+    from app.core.quota import record_spend
+
+    principal = _principal()
+    record_spend(principal.tenant_id, settings.tenant_daily_budget_usd)
+
+    try:
+        result = _rpc(
+            client,
+            "tools/call",
+            _mcp_token(principal),
+            name="search_knowledge",
+            arguments={"query": "refunds"},
+        )
+        assert result["status"] == 402
+        assert result["body"]["error"]["code"] == -32003
+    finally:
+        import contextlib
+
+        from app.db.session import redis_client
+
+        with contextlib.suppress(Exception):
+            for key in redis_client.scan_iter(f"*{principal.tenant_id}*"):
+                redis_client.delete(key)
+
+
+def test_listing_tools_is_not_metered(client: TestClient) -> None:
+    """Discovery costs nothing and must stay free.
+
+    A client that cannot list tools without spending budget cannot connect at
+    all once the budget is gone, which would make an exhausted quota look like
+    an outage.
+    """
+    from app.core.quota import quota_status
+
+    principal = _principal()
+    before = quota_status(principal.tenant_id).spent_usd
+
+    result = _rpc(client, "tools/list", _mcp_token(principal))
+    assert result["status"] == 200
+
+    assert quota_status(principal.tenant_id).spent_usd == before
