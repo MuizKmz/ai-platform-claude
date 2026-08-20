@@ -90,6 +90,20 @@ POLICIES: tuple[RetentionPolicy, ...] = (
         days=365,
         reason="the compliance record — who ran what SQL. Asked for a year later",
     ),
+    RetentionPolicy(
+        table="approval_request",
+        days=365,
+        # Matches connector_audit, and for the same reason. This row is the
+        # evidence that a named human approved a write which reached a
+        # production system — the record somebody asks for when the question
+        # is "who authorised this, and what exactly did they authorise". A
+        # shorter period would delete the answer before the question arrives.
+        #
+        # Note the migration grants no DELETE on this table to app_rw:
+        # retention runs as the owner. The application can propose, decide, and
+        # execute; it cannot erase the trail.
+        reason="evidence that a human approved a write; the record an auditor asks for",
+    ),
 )
 
 # Rows per table per run. Bounded so a first run against a large backlog cannot

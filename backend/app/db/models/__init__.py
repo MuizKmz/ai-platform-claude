@@ -2,6 +2,7 @@
 which is what Alembic autogenerate walks."""
 
 from app.db.models.agent_run import AgentRunRecord
+from app.db.models.approval_request import ApprovalRequest, ApprovalStatus
 from app.db.models.audit import ConnectorAudit
 from app.db.models.chunk import Chunk
 from app.db.models.connector import ConnectorConfigRecord
@@ -14,6 +15,8 @@ from app.db.models.user import User
 
 __all__ = [
     "AgentRunRecord",
+    "ApprovalRequest",
+    "ApprovalStatus",
     "Chunk",
     "ConnectorAudit",
     "ConnectorConfigRecord",
