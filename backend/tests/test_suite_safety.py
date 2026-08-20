@@ -30,7 +30,24 @@ _SLUG_LITERAL = re.compile(r"INSERT INTO tenant.*?'([a-z0-9-]+)'", re.IGNORECASE
 # sits inside a pytest.raises. Exempting them by name keeps the guard meaningful
 # elsewhere; a blanket "ignore anything in a raises block" would be easy to
 # accidentally satisfy.
-_ATTACK_STRING_FILES = frozenset({"test_sql_safety.py"})
+_ATTACK_STRING_FILES = frozenset({"test_sql_safety.py", "test_redteam_corpus.py"})
+
+# Files that genuinely EXECUTE a DROP, and are allowed to. A different category
+# from the above, and a narrower one: these do the dangerous thing rather than
+# proving it is refused.
+#
+# test_restore.py drops a scratch database named `eaip_restore_test`, which it
+# also creates. That is the only way to prove a restore works — the Phase 8 DoD
+# asks for a restore "actually performed, not just documented", and you cannot
+# perform one without somewhere to perform it into.
+#
+# The exemption is kept honest by test_the_drop_exemption_is_narrow below: the
+# guard would be worthless if a file could opt out of it by being added here.
+_MAY_DROP_A_SCRATCH_DATABASE = frozenset({"test_restore.py"})
+
+# Databases a test is permitted to drop. Anything else is a bug, and naming
+# them makes "DROP DATABASE eaip" impossible to add by accident.
+_DROPPABLE_DATABASES = frozenset({"eaip_restore_test"})
 
 
 def _test_files() -> list[Path]:
@@ -38,7 +55,8 @@ def _test_files() -> list[Path]:
 
 
 def _files_that_must_not_mutate() -> list[Path]:
-    return [p for p in _test_files() if p.name not in _ATTACK_STRING_FILES]
+    exempt = _ATTACK_STRING_FILES | _MAY_DROP_A_SCRATCH_DATABASE
+    return [p for p in _test_files() if p.name not in exempt]
 
 
 def test_no_test_issues_an_unscoped_delete() -> None:
@@ -88,3 +106,46 @@ def test_no_test_truncates_or_drops() -> None:
 
     joined = "\n".join(offenders)
     assert not offenders, f"destructive DDL in tests:\n{joined}"
+
+
+def test_the_drop_exemption_is_narrow() -> None:
+    """A file allowed to DROP may only drop the scratch databases named here.
+
+    The exemption above would be worthless if adding a filename to it were a
+    way to opt out of the guard entirely. This re-imposes the check on exactly
+    the files that were let through, permitting only the named scratch
+    databases — so `DROP DATABASE eaip` in test_restore.py fails here even
+    though that file is exempt from the broad rule.
+    """
+    droppable = "|".join(re.escape(name) for name in _DROPPABLE_DATABASES)
+    permitted = re.compile(
+        r"DROP\s+DATABASE\s+(IF\s+EXISTS\s+)?(\{SCRATCH_DB\}|" + droppable + r")",
+        re.IGNORECASE,
+    )
+    offenders: list[str] = []
+
+    for path in _test_files():
+        if path.name not in _MAY_DROP_A_SCRATCH_DATABASE:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if re.search(r"\bDROP\s+DATABASE\b", line, re.IGNORECASE) and not permitted.search(
+                line
+            ):
+                offenders.append(f"{path.relative_to(TESTS_DIR)}:{lineno}: {line.strip()}")
+
+    joined = "\n".join(offenders)
+    assert not offenders, (
+        f"a DROP DATABASE outside the permitted scratch names:\n{joined}\n"
+        f"Permitted: {sorted(_DROPPABLE_DATABASES)}"
+    )
+
+
+def test_the_scratch_database_name_cannot_be_a_real_one() -> None:
+    """The scratch name must not collide with anything real."""
+    from app.core.config import settings
+
+    assert settings.postgres_db not in _DROPPABLE_DATABASES, (
+        f"the live database {settings.postgres_db!r} is in the droppable list"
+    )
+    for name in _DROPPABLE_DATABASES:
+        assert "test" in name, f"scratch database {name!r} is not obviously a test database"

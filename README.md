@@ -25,6 +25,7 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | **5 — REST connector** | ✅ Complete. GET-only HTTP, circuit breaker, config-driven endpoints — and `base.py` unchanged |
 | **6 — Integration console** | ✅ Complete. Next.js control plane: chat with citations, knowledge management, trace and audit viewers |
 | **7 — Agent orchestration** | ✅ Complete. Multi-tool reasoning with hard limits, invocation-time authorization, and durable state |
+| **8 — Security & reliability** | ✅ Complete. Rate limits and budgets, PII detection and trace redaction, retention, red-team corpus in CI, dependency scanning, verified restore |
 
 **No write operations.** That is deliberate — Phase 9 adds them behind human approval.
 See the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).

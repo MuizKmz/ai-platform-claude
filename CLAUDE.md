@@ -22,8 +22,14 @@ hard limits, invocation-time authorization, and Postgres checkpointing (ADR 0005
 `ConnectorOut` has no field for it; `has_credential` is the boolean a UI needs. Adding
 a read path would undo the guarantee, not extend it.
 
+**Phase 8 complete — hardening.** Per-tenant rate limits and daily budgets, PII detection
+at ingestion with redaction in traces, data retention, a 37-attack red-team corpus in CI
+with zero successful escalations, dependency scanning, and a backup whose restore is
+actually performed. Security docs: [THREAT_MODEL](docs/THREAT_MODEL.md),
+[DATA_POLICY](docs/DATA_POLICY.md), [RUNBOOK](docs/RUNBOOK.md).
+
 There are still **no write operations**. Do not add any — that is Phase 9, and it needs
-the approval model that phase specifies. Phase 8 is security and reliability hardening.
+the approval model that phase specifies.
 
 Tool authorization is re-checked at every invocation in `tools/base.py`. Never cache it,
 never trust what the model requested, and never let a tool be invoked outside

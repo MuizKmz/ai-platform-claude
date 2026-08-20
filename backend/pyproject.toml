@@ -44,7 +44,11 @@ dev = [
 testpaths = ["tests"]
 # The security suite is named so CI can report on it separately and so it can
 # never be quietly skipped: `pytest -m security` must stay green forever.
-markers = ["security: tenant isolation and authorization guarantees"]
+markers = [
+    "security: tenant isolation and authorization guarantees",
+    # Shells out to docker and creates databases. Deselect with -m 'not slow'.
+    "slow: seconds rather than milliseconds; needs a running container",
+]
 # Fail loudly on an unraisable warning rather than letting it scroll past.
 filterwarnings = ["error::DeprecationWarning:app.*"]
 

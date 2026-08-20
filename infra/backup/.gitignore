@@ -1,0 +1,4 @@
+# Dumps are data, not source. They contain every tenant's documents,
+# conversations, and encrypted credentials — committing one would put the
+# corpus in git history permanently.
+dumps/
