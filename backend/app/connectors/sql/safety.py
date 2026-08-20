@@ -185,7 +185,7 @@ class SafeSQL:
     limit_applied: bool
 
 
-def validate(sql: str, *, max_rows: int = MAX_ROWS) -> SafeSQL:
+def validate(sql: str, *, max_rows: int = MAX_ROWS, schema: str = "curated") -> SafeSQL:
     """Parse, validate, and normalise a statement, or raise UnsafeSQLError."""
     statements = _parse(sql)
 
@@ -208,6 +208,7 @@ def validate(sql: str, *, max_rows: int = MAX_ROWS) -> SafeSQL:
     _assert_no_writes(statement)
     _assert_allowed_nodes(statement)
     _assert_no_forbidden_functions(statement)
+    _assert_only_curated_tables(statement, schema)
 
     # Narrowed above: the top level is Select/Union/Intersect/Except, all of
     # which are exp.Query and therefore carry .limit().
@@ -309,3 +310,41 @@ def _apply_limit(statement: exp.Query, max_rows: int) -> tuple[str, bool]:
             applied = True
 
     return statement.sql(dialect=DIALECT), applied
+
+
+def _assert_only_curated_tables(statement: exp.Expression, schema: str) -> None:
+    """Every table referenced must live in the curated schema.
+
+    Added after the red-team corpus found the gap: the validator checked node
+    types and functions but never table NAMES, so `SELECT * FROM pg_user` passed
+    every layer and reached the database — where Postgres grants that catalogue
+    to PUBLIC and happily returned it.
+
+    No credential leaked (passwords read as `********`), but role names, which
+    role is superuser, every database name, and 72 table names across the
+    cluster did. That is reconnaissance, and it was reachable by asking the
+    agent a question.
+
+    The read-only role remains the backstop and blocked the worse targets —
+    `customers`, `pg_shadow`. This layer means a generated query never gets to
+    ask. Defence in depth: the grant is the control, this is the thing that
+    stops the control being the only one.
+
+    CTE aliases are exempt: `WITH recent AS (SELECT ... FROM curated.v_orders)
+    SELECT * FROM recent` references `recent`, which is not a table.
+    """
+    cte_names = {
+        cte.alias_or_name.lower() for cte in statement.find_all(exp.CTE) if cte.alias_or_name
+    }
+
+    for table in statement.find_all(exp.Table):
+        name = (table.name or "").lower()
+        if not name or name in cte_names:
+            continue
+
+        table_schema = (table.db or "").lower()
+        if table_schema != schema.lower():
+            raise UnsafeSQLError(
+                f"Only tables in the {schema!r} schema may be queried. "
+                f"Qualify the table as {schema}.<view_name>."
+            )

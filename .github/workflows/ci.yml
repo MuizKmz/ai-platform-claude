@@ -119,6 +119,22 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
+      - name: Red-team corpus
+        # Already covered by the run above; repeated as its own step because the
+        # Phase 8 DoD requires the corpus to run in CI and this makes it a named
+        # gate rather than a line in a summary. A green build should be
+        # readable as "zero successful escalations" without opening the log.
+        run: uv run pytest tests/security/test_redteam_corpus.py -q
+
+      - name: Dependency scan
+        # pip-audit against the resolved lockfile. Advisory data changes daily,
+        # so this can fail on a commit that changed nothing — which is the
+        # point: a vulnerability disclosed today is one we want to hear about
+        # today, not at the next dependency bump.
+        run: |
+          uv export --frozen --no-dev --no-emit-project > /tmp/requirements.txt
+          uv run --with pip-audit pip-audit --disable-pip --requirement /tmp/requirements.txt
+
       - name: Security suite must actually run
         # A skipped security test is worse than a failing one: it reports green
         # while proving nothing. -p no:randomly keeps output stable; the explicit

@@ -1,0 +1,49 @@
+# Attempts to reach another tenant's data through the API.
+#
+# Every one of these is a request a legitimate client could make. None involves
+# a malformed token or a forged signature — those are covered by test_auth.py.
+# These are the subtler case: a VALID caller asking for something that belongs
+# to someone else, which is what Row-Level Security exists to refuse.
+
+- name: another tenant's document by id
+  method: GET
+  path: /v1/documents/{other_document_id}
+  expect_status: [404]
+  why: 404 not 403 — a different status would confirm it exists
+
+- name: another tenant's connector by id
+  method: GET
+  path: /v1/integrations/{other_connector_id}
+  expect_status: [403, 404]
+  why: admin-only, and then invisible across tenants
+
+- name: another tenant's user by id
+  method: GET
+  path: /v1/users/{other_user_id}
+  expect_status: [403, 404]
+
+- name: another tenant's trace
+  method: GET
+  path: /v1/traces
+  expect_status: [200, 403]
+  why: 200 is fine; the assertion is that the BODY contains none of theirs
+
+- name: tenant_id smuggled in a request body
+  method: POST
+  path: /v1/chat
+  body: {question: "hello", tenant_id: "{other_tenant_id}"}
+  expect_status: [200, 402, 429]
+  why: the field is ignored entirely — tenancy comes from the token
+
+- name: tenant_id smuggled in a query parameter
+  method: GET
+  path: /v1/documents?tenant_id={other_tenant_id}
+  expect_status: [200]
+  why: same — the parameter is not read
+
+- name: tenant_id smuggled in a header
+  method: GET
+  path: /v1/documents
+  headers: {X-Tenant-Id: "{other_tenant_id}"}
+  expect_status: [200]
+  why: same
