@@ -13,6 +13,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.core.quota import QuotaExceededError, check_quota
+from app.core.ratelimit import RateLimit, RateLimitExceededError, check_rate_limit
 from app.core.security import AuthError, Principal, principal_from_token
 from app.db.session import SessionLocal
 
@@ -79,3 +82,45 @@ def get_tenant_db(
 
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 TenantDB = Annotated[Session, Depends(get_tenant_db)]
+
+
+def enforce_llm_limits(principal: Principal) -> None:
+    """Rate limit and budget check for endpoints that call a model.
+
+    Both are per tenant rather than per user. A per-user limit is trivially
+    multiplied by creating users, and the tenant is who receives the invoice.
+
+    Order matters: the rate limit is consumed first, so a tenant that is over
+    budget cannot also spend the platform's time on quota lookups at unlimited
+    speed. Both raise before any expensive work begins.
+    """
+    try:
+        check_rate_limit(
+            f"llm:{principal.tenant_id}",
+            RateLimit(limit=settings.llm_requests_per_minute, window_seconds=60),
+        )
+    except RateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Try again shortly.",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+
+    try:
+        check_quota(principal.tenant_id)
+    except QuotaExceededError as exc:
+        # 402 rather than 429: this is not "slow down", it is "the budget for
+        # today is gone". A caller that retries a 429 will succeed shortly; one
+        # that retries this will not, and the status should say so.
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=str(exc),
+        ) from exc
+
+
+def _llm_limited(principal: Annotated[Principal, Depends(get_principal)]) -> None:
+    enforce_llm_limits(principal)
+
+
+# Declare on any endpoint that calls a model. Runs before the handler body.
+LLMLimited = Annotated[None, Depends(_llm_limited)]

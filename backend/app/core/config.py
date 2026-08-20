@@ -98,6 +98,19 @@ class Settings(BaseSettings):
     # convenient.
     allow_loopback_connectors: bool = False
 
+    # --- Limits -----------------------------------------------------------
+    # What one tenant may spend on model calls per UTC day. The agent's
+    # RunLimits cap a single run; this caps the sum of them, which is the
+    # failure a per-run limit cannot see — a thousand well-behaved requests.
+    #
+    # Deliberately low by default. A budget that has to be raised on purpose is
+    # safer than one that silently permits a surprising invoice.
+    tenant_daily_budget_usd: float = 5.0
+
+    # Requests per minute, per tenant, for endpoints that call a model. Chat
+    # and the agent are the expensive paths; search and listing are not.
+    llm_requests_per_minute: int = 30
+
     # --- Console ----------------------------------------------------------
     # Origins the browser console is served from. An ALLOWLIST, never "*":
     # this API is authenticated by a bearer token, and a wildcard origin would

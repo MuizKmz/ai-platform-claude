@@ -29,12 +29,13 @@ from sqlalchemy.orm import Session
 from app.agent.checkpointer import get_checkpointer
 from app.agent.graph import run_agent
 from app.agent.limits import RunLimits
-from app.api.deps import CurrentPrincipal, TenantDB
+from app.api.deps import CurrentPrincipal, LLMLimited, TenantDB
 from app.connectors.base import ConnectorError
 from app.connectors.egress import EgressBlockedError, EgressPolicy
 from app.connectors.sql.connector import SQLConnector, SQLConnectorConfig
 from app.connectors.sql.semantic_layer import ANALYTICS_SEMANTICS
 from app.core.config import settings
+from app.core.quota import record_spend
 from app.core.security import Principal
 from app.knowledge.embedding import get_embedding_provider
 from app.llm.base import LLMProvider
@@ -184,6 +185,9 @@ def ask_agent(
     request: AgentRequest,
     principal: CurrentPrincipal,
     db: TenantDB,
+    # Per-tenant rate limit and daily budget. The agent's RunLimits cap one
+    # run; these cap the sum of them.
+    _limits: LLMLimited = None,
 ) -> AgentResponse:
     """Answer a question, choosing tools as needed."""
     llm = get_llm()
@@ -228,6 +232,9 @@ def ask_agent(
     # Only refusals of tools that actually exist. A model inventing a tool name
     # is a hallucination, not an escalation attempt, and counting it here would
     # dilute the one column an auditor reads to find the real thing.
+    # After the money is spent, outside the transaction.
+    record_spend(principal.tenant_id, run.cost_usd)
+
     denied = sum(
         1 for c in run.tool_calls if c.metadata.get("denied") and not c.metadata.get("unknown_tool")
     )
@@ -347,6 +354,9 @@ def _answer_directly(
         )
         answer, usage = answer_question(question, hits, llm)
         cost = llm.cost_of(usage) if usage else 0.0
+        # The routed path is cheaper, not free. Recorded here because it returns
+        # before the agent path's record_spend ever runs.
+        record_spend(principal.tenant_id, cost)
 
         span.set_attribute("result_count", len(hits))
         span.set_attribute("refused", answer.refused)

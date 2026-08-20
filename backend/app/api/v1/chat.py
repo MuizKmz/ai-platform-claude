@@ -17,13 +17,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentPrincipal, TenantDB
+from app.api.deps import CurrentPrincipal, LLMLimited, TenantDB
 from app.core.config import settings
+from app.core.quota import record_spend
 from app.core.security import Principal
 from app.knowledge.embedding import get_embedding_provider
 from app.knowledge.retrieval import SearchHit, search
 from app.llm.answering import REFUSAL, answer_question, build_messages, verify_citations
-from app.llm.base import LLMError, LLMProvider, LLMTimeoutError
+from app.llm.base import LLMError, LLMProvider, LLMTimeoutError, Usage
 from app.llm.providers.openai_provider import OpenAIProvider
 from app.observability.tracing import new_trace_id, trace
 
@@ -142,6 +143,9 @@ def chat(
     request: ChatRequest,
     principal: CurrentPrincipal,
     db: TenantDB,
+    # Rate limit and daily budget, both per tenant. Declared as a dependency so
+    # it runs before the handler body — a 429 or 402 must cost nothing.
+    _limits: LLMLimited = None,
 ) -> ChatResponse | StreamingResponse:
     """Answer a question from the tenant's permitted documents."""
     provider = get_llm()
@@ -152,7 +156,7 @@ def chat(
         span.set_attribute("result_count", len(hits))
 
     if request.stream:
-        return _stream_response(request, hits, provider, trace_id)
+        return _stream_response(request, hits, provider, trace_id, principal.tenant_id)
 
     with trace(db, "llm.generate", tenant_id=principal.tenant_id, trace_id=trace_id) as span:
         try:
@@ -218,6 +222,10 @@ def chat(
         refused=answer.refused,
     )
 
+    # After the money is spent, and outside the request transaction: the
+    # provider was billed whether or not this request commits.
+    record_spend(principal.tenant_id, cost)
+
     return ChatResponse(
         answer=answer.text,
         citations=citations_out,
@@ -238,6 +246,7 @@ def _stream_response(
     hits: list[SearchHit],
     provider: LLMProvider,
     trace_id: str,
+    tenant_id: uuid.UUID,
 ) -> StreamingResponse:
     """Server-Sent Events.
 
@@ -269,6 +278,18 @@ def _stream_response(
         cleaned, citations, dropped = verify_citations("".join(collected), hits)
         if dropped:
             logger.warning("dropped %d unverifiable citation(s) in stream", len(dropped))
+
+        # The streaming path spends money too, and until now spent it silently:
+        # a tenant that always streamed would have consumed no quota at all.
+        # Streaming yields no Usage object, so the tokens are counted from the
+        # prompt and the collected text — an estimate, and a far better one than
+        # zero.
+        prompt_text = "".join(message.content for message in build_messages(request.question, hits))
+        estimated = Usage(
+            prompt_tokens=provider.count_tokens(prompt_text),
+            completion_tokens=provider.count_tokens(cleaned),
+        )
+        record_spend(tenant_id, provider.cost_of(estimated))
 
         yield _sse(
             "done",

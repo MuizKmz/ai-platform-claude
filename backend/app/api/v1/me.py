@@ -5,6 +5,7 @@ anything to retrieve. It echoes only what the verified token established.
 """
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -35,4 +36,34 @@ def me(principal: CurrentPrincipal) -> MeResponse:
         email=principal.email,
         roles=list(principal.roles),
         allowed_labels=list(principal.allowed_labels),
+    )
+
+
+class QuotaResponse(BaseModel):
+    spent_usd: float
+    limit_usd: float
+    remaining_usd: float
+    exhausted: bool
+    resets_at: datetime
+
+
+@router.get("/me/quota", response_model=QuotaResponse)
+def my_quota(principal: CurrentPrincipal) -> QuotaResponse:
+    """This tenant's spend against its daily budget.
+
+    Not admin-only. Everyone who can spend the budget should be able to see how
+    much of it is left — a limit people cannot observe is one they discover by
+    being refused, which is the worst moment to learn about it.
+
+    Read-only: nothing here can change the ceiling. That is configuration.
+    """
+    from app.core.quota import quota_status
+
+    status = quota_status(principal.tenant_id)
+    return QuotaResponse(
+        spent_usd=round(status.spent_usd, 6),
+        limit_usd=status.limit_usd,
+        remaining_usd=round(status.remaining_usd, 6),
+        exhausted=status.exhausted,
+        resets_at=status.resets_at,
     )
