@@ -148,6 +148,36 @@ export const api = {
       body: JSON.stringify({ question, force_agent: forceAgent }),
     }),
 
+  // --- integrations ---------------------------------------------------------
+  // Admin-only, enforced by the API. This client does not pre-check the role:
+  // hiding a control is a courtesy, never a control.
+
+  integrations: () => request<Integration[]>("/v1/integrations"),
+
+  createIntegration: (body: IntegrationCreate) =>
+    request<Integration>("/v1/integrations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Update a connector. Omit `credential` to keep the stored one — which is
+   *  the normal case, since it cannot be read back to re-submit. */
+  updateIntegration: (id: string, body: IntegrationUpdate) =>
+    request<Integration>(`/v1/integrations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteIntegration: (id: string) =>
+    request<void>(`/v1/integrations/${id}`, { method: "DELETE" }),
+
+  /** Probe a connector. Rate-limited to 5/minute/tenant by the API — a 429 here
+   *  is expected behaviour, not an error to retry through. */
+  testIntegration: (id: string) =>
+    request<IntegrationTestResult>(`/v1/integrations/${id}/test`, {
+      method: "POST",
+    }),
+
   // --- observability --------------------------------------------------------
   // Admin-only. Both endpoints return records ABOUT users rather than for
   // them, and the API enforces the role — this client does not pre-check it.
@@ -250,6 +280,53 @@ export interface AgentResponse {
    *  run went the way it did — an agent with one tool cannot answer a
    *  two-source question however well it plans. */
   available_tools: string[];
+}
+
+export interface Integration {
+  id: string;
+  kind: string;
+  slug: string;
+  display_name: string;
+  description: string | null;
+  required_labels: string[];
+  enabled: boolean;
+  settings: Record<string, unknown>;
+  /** Whether a credential is stored. The value itself is never returned by any
+   *  endpoint — there is no field for it, by design. */
+  has_credential: boolean;
+  last_tested_at: string | null;
+  last_test_ok: boolean | null;
+  last_test_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntegrationCreate {
+  kind: string;
+  slug: string;
+  display_name: string;
+  description?: string | null;
+  required_labels: string[];
+  settings: Record<string, unknown>;
+  credential?: string | null;
+  enabled?: boolean;
+}
+
+export interface IntegrationUpdate {
+  display_name?: string;
+  description?: string | null;
+  required_labels?: string[];
+  settings?: Record<string, unknown>;
+  credential?: string;
+  enabled?: boolean;
+}
+
+export interface IntegrationTestResult {
+  ok: boolean;
+  /** An error CLASS, never upstream text — the API withholds hostnames and
+   *  driver messages on purpose. */
+  error: string | null;
+  duration_ms: number;
 }
 
 export interface Span {
