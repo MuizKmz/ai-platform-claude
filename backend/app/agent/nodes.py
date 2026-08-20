@@ -301,13 +301,27 @@ def act_node(
         # learns the tool is unavailable and can answer honestly without it —
         # and the denial is recorded in the trace, which is what makes a run of
         # them visible as an escalation attempt.
+        #
+        # Two different events raise this one error, and the API keeps them
+        # indistinguishable to the MODEL on purpose: a distinct message for a
+        # nonexistent tool would let it probe what other tenants have
+        # configured. They are separated here, for the record, because
+        # `denied_tool_calls` is what an auditor reads to spot an escalation
+        # attempt — and a model fumbling a tool name (`database_query` for
+        # `query_database`) inflating that count is a false positive in the
+        # one number meant to catch a real one.
+        # Registered for the tenant, NOT "available to this caller". A tool the
+        # caller may not use still exists, and asking for it is the case worth
+        # recording — using the authorized list here would have marked every
+        # real denial as a typo.
+        known = registry.is_registered(principal.tenant_id, tool_name)
         call = ToolCall(
             tool=tool_name,
             arguments=arguments,
             content="",
             error=str(exc),
             duration_ms=(time.perf_counter() - started) * 1000,
-            metadata={"denied": True},
+            metadata={"denied": True} if known else {"denied": True, "unknown_tool": True},
         )
     except ToolError as exc:
         call = ToolCall(

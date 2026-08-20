@@ -78,6 +78,10 @@ class ToolCallOut(BaseModel):
     # first result rather than re-run. Shown so a reader is not misled into
     # thinking the agent consulted a source twice.
     cached: bool = False
+    # Whether the refusal was because no tool of that name exists, rather than
+    # because the caller may not use it. Both raise the same error by design;
+    # only this field separates a hallucinated name from an escalation attempt.
+    unknown_tool: bool = False
 
 
 class AgentResponse(BaseModel):
@@ -91,6 +95,14 @@ class AgentResponse(BaseModel):
     # True when the question was answered without the agent. Surfaced so a
     # caller can tell a routed answer from a reasoned one.
     routed_directly: bool
+    # The tools this caller was actually offered.
+    #
+    # Lets a console tell "you may not use that" from "that tool does not
+    # exist" — the model is deliberately told neither, because a distinct
+    # error for a nonexistent tool would let it probe what is configured for
+    # other tenants. The caller is already authenticated inside their own
+    # tenant, so showing them their own tool list discloses nothing.
+    available_tools: list[str]
 
 
 # Words suggesting a question needs more than one source. Deliberately crude:
@@ -202,10 +214,23 @@ def ask_agent(
         span.set_attribute("answered", run.succeeded)
         span.set_attribute(
             "denied_tool_calls",
-            sum(1 for c in run.tool_calls if c.metadata.get("denied")),
+            sum(
+                1
+                for c in run.tool_calls
+                if c.metadata.get("denied") and not c.metadata.get("unknown_tool")
+            ),
+        )
+        span.set_attribute(
+            "unknown_tool_requests",
+            sum(1 for c in run.tool_calls if c.metadata.get("unknown_tool")),
         )
 
-    denied = sum(1 for c in run.tool_calls if c.metadata.get("denied"))
+    # Only refusals of tools that actually exist. A model inventing a tool name
+    # is a hallucination, not an escalation attempt, and counting it here would
+    # dilute the one column an auditor reads to find the real thing.
+    denied = sum(
+        1 for c in run.tool_calls if c.metadata.get("denied") and not c.metadata.get("unknown_tool")
+    )
     _record_run(
         db,
         principal=principal,
@@ -234,6 +259,7 @@ def ask_agent(
                 duration_ms=round(call.duration_ms, 2),
                 denied=bool(call.metadata.get("denied")),
                 cached=bool(call.metadata.get("cached")),
+                unknown_tool=bool(call.metadata.get("unknown_tool")),
             )
             for call in run.tool_calls
         ],
@@ -241,6 +267,7 @@ def ask_agent(
         cost_usd=run.cost_usd,
         trace_id=trace_id,
         routed_directly=False,
+        available_tools=[spec.name for spec in registry.available_to(principal)],
     )
 
 
@@ -349,4 +376,6 @@ def _answer_directly(
         cost_usd=round(cost, 6),
         trace_id=trace_id,
         routed_directly=True,
+        # No tools were offered on this path — it never reached the agent.
+        available_tools=[],
     )

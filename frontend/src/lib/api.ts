@@ -228,6 +228,9 @@ export interface AgentToolCall {
   /** True when this repeated an earlier identical call and was served from the
    *  first result instead of being re-run. */
   cached: boolean;
+  /** True when the refusal was because no tool of that name exists — the model
+   *  invented it — rather than a real authorization failure. */
+  unknown_tool: boolean;
 }
 
 export interface AgentResponse {
@@ -243,6 +246,10 @@ export interface AgentResponse {
   trace_id: string;
   /** True when the question was answered without the agent. */
   routed_directly: boolean;
+  /** The tools this caller was actually offered, which is what explains why a
+   *  run went the way it did — an agent with one tool cannot answer a
+   *  two-source question however well it plans. */
+  available_tools: string[];
 }
 
 export interface Span {

@@ -516,3 +516,60 @@ def test_a_repeat_is_marked_in_what_the_planner_sees() -> None:
 
     # The last prompt is the one written after the repeat was served.
     assert "REPEAT" in captured[-1]
+
+
+# --- a hallucinated tool name is not an escalation attempt ----------------------
+
+
+def test_an_unknown_tool_name_is_marked_separately_from_a_denial() -> None:
+    """Both raise the same error; only one means someone tried something.
+
+    Observed live: the model asked for `database_query` when the tool is called
+    `query_database`. That is a fumbled name, not an attempt to reach a tool it
+    may not use — and `denied_tool_calls` is the column an auditor reads to find
+    the real thing. Counting hallucinations there dilutes the signal.
+    """
+    tool = StubTool("search_knowledge", ("public",))
+    planner = ScriptedPlanner(
+        [
+            {"reasoning": "guess", "tool": "database_query", "arguments": {"query": "x"}},
+            {"reasoning": "fall back", "answer": "Not available."},
+        ]
+    )
+
+    run = run_agent(
+        "how many orders, and what is the policy",
+        principal=ANALYST,
+        registry=_registry(tool),
+        llm=planner,
+    )
+
+    call = run.tool_calls[0]
+    assert call.metadata.get("denied") is True, "it was still refused"
+    assert call.metadata.get("unknown_tool") is True, "no such tool exists"
+
+
+def test_a_real_denial_is_not_marked_as_an_unknown_tool() -> None:
+    """The complement. A tool that exists and is refused is the case that
+    matters, and it must stay distinguishable from a typo."""
+    forbidden = StubTool("query_database", ("analytics",))
+    allowed = StubTool("search_knowledge", ("public",))
+    planner = ScriptedPlanner(
+        [
+            {"reasoning": "reach", "tool": "query_database", "arguments": {"query": "x"}},
+            {"reasoning": "stop", "answer": "Not available."},
+        ]
+    )
+
+    run = run_agent(
+        "how many orders, and what is the policy",
+        # READER holds `public` only, so query_database exists but is refused.
+        principal=READER,
+        registry=_registry(forbidden, allowed),
+        llm=planner,
+    )
+
+    call = run.tool_calls[0]
+    assert call.metadata.get("denied") is True
+    assert not call.metadata.get("unknown_tool"), "a real refusal was mislabelled a typo"
+    assert forbidden.calls == 0

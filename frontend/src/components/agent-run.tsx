@@ -7,6 +7,7 @@ import {
   Database,
   FileSearch,
   Globe,
+  HelpCircle,
   ShieldOff,
   Wrench,
 } from "lucide-react";
@@ -28,7 +29,13 @@ import type { AgentResponse, AgentToolCall } from "@/lib/api";
  * and hiding it would remove the only place a person would notice.
  */
 export function AgentRunView({ response }: { response: AgentResponse }) {
-  const denied = response.tool_calls.filter((c) => c.denied).length;
+  // The server draws this distinction, because the same decision also governs
+  // `denied_tool_calls` in the run record. Re-deriving it here from the offered
+  // list would be a second implementation, free to disagree with the first.
+  const denied = response.tool_calls.filter(
+    (c) => c.denied && !c.unknown_tool,
+  ).length;
+  const invented = response.tool_calls.filter((c) => c.unknown_tool).length;
   const repeats = response.tool_calls.filter((c) => c.cached).length;
 
   return (
@@ -85,8 +92,21 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
             {denied} denied
           </span>
         ) : null}
+        {invented > 0 ? (
+          <span title="The model requested a tool that does not exist">
+            {invented} unknown
+          </span>
+        ) : null}
         {repeats > 0 ? <span>{repeats} repeat{repeats === 1 ? "" : "s"}</span> : null}
         <span>${response.cost_usd.toFixed(6)}</span>
+        {response.available_tools.length > 0 ? (
+          // The tools this caller actually held. An agent with one tool cannot
+          // answer a two-source question however well it plans, and without
+          // this the shortfall looks like a reasoning failure.
+          <span title="Tools available to you for this run">
+            {response.available_tools.join(" · ")}
+          </span>
+        ) : null}
         <Badge
           variant="outline"
           className="h-4 px-1.5 font-mono text-[10px] font-normal"
@@ -101,9 +121,12 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
 
 function ToolCallCard({ call, index }: { call: AgentToolCall; index: number }) {
   const [open, setOpen] = useState(false);
-  // A denial is not an ordinary failure. It means the model asked for something
-  // it was not authorized to use, which is worth distinguishing visually.
-  const isDenial = call.denied;
+  // Two different events wear the same error. A tool the caller may not use is
+  // a real refusal; a tool that exists nowhere is the model inventing a name.
+  // Only the first says anything about authorization, and showing both as
+  // "denied" makes an ordinary hallucination look like an escalation attempt.
+  const isUnknown = call.unknown_tool;
+  const isDenial = call.denied && !isUnknown;
 
   return (
     <li
@@ -111,7 +134,7 @@ function ToolCallCard({ call, index }: { call: AgentToolCall; index: number }) {
         "rounded-md border",
         isDenial
           ? "border-destructive/40 bg-destructive/5"
-          : call.error
+          : call.error || isUnknown
             ? "border-border/60 bg-muted/30"
             : "border-border/50 bg-card/30",
       )}
@@ -129,12 +152,24 @@ function ToolCallCard({ call, index }: { call: AgentToolCall; index: number }) {
           )}
         />
         <span className="text-muted-foreground font-mono text-[11px]">{index}</span>
-        <ToolIcon name={call.tool} denied={isDenial} />
+        <ToolIcon name={call.tool} denied={isDenial} unknown={isUnknown} />
         <span className="flex-1 truncate font-mono text-xs">{call.tool}</span>
 
         {isDenial ? (
-          <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">
+          <Badge
+            variant="destructive"
+            className="h-5 px-1.5 text-[10px]"
+            title="This tool exists but you are not authorized to use it"
+          >
             denied
+          </Badge>
+        ) : isUnknown ? (
+          <Badge
+            variant="outline"
+            className="h-5 px-1.5 text-[10px]"
+            title="The model requested a tool that does not exist — refused because nothing by that name is registered"
+          >
+            unknown tool
           </Badge>
         ) : call.error ? (
           <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
@@ -170,7 +205,14 @@ function ToolCallCard({ call, index }: { call: AgentToolCall; index: number }) {
             </div>
           ) : null}
 
-          {call.error ? (
+          {isUnknown ? (
+            <p className="text-muted-foreground text-[11px] leading-relaxed">
+              No tool by this name is registered, so the request was refused
+              before any authorization check. The message is deliberately
+              identical to a real denial: telling the model which tools exist
+              elsewhere would let it probe another tenant&apos;s configuration.
+            </p>
+          ) : call.error ? (
             <p className="text-destructive/90 text-[11px]">{call.error}</p>
           ) : (
             <div>
@@ -190,9 +232,18 @@ function ToolCallCard({ call, index }: { call: AgentToolCall; index: number }) {
   );
 }
 
-function ToolIcon({ name, denied }: { name: string; denied: boolean }) {
+function ToolIcon({
+  name,
+  denied,
+  unknown,
+}: {
+  name: string;
+  denied: boolean;
+  unknown: boolean;
+}) {
   const className = "size-3.5 shrink-0 text-muted-foreground";
   if (denied) return <ShieldOff className={className} />;
+  if (unknown) return <HelpCircle className={className} />;
   if (name.includes("database")) return <Database className={className} />;
   if (name.includes("knowledge") || name.includes("search"))
     return <FileSearch className={className} />;

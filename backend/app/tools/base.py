@@ -154,6 +154,21 @@ class ToolRegistry:
             specs.append(tool.spec)
         return specs
 
+    def is_registered(self, tenant_id: uuid.UUID, name: str) -> bool:
+        """Whether a tool of this name exists for the tenant.
+
+        Says nothing about whether anyone may use it — deliberately. It exists
+        so a refusal can be classified after the fact: a model asking for a tool
+        that is not configured at all has fumbled a name, while one asking for a
+        tool that exists and is denied has attempted something. Both raise the
+        same error, because telling them apart in the error would let a model
+        probe what is configured elsewhere.
+
+        Not part of the authorization path. `invoke` remains the only thing that
+        decides whether a call proceeds.
+        """
+        return name in self._by_tenant.get(tenant_id, {})
+
     def invoke(self, principal: Principal, name: str, **kwargs: Any) -> ToolResult:
         """Authorize, then run.
 
