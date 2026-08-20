@@ -91,6 +91,34 @@ def test_loopback_is_blocked_even_when_private_is_allowed() -> None:
         resolve_and_validate("localhost", 5432, EgressPolicy(allow_private=True))
 
 
+def test_loopback_requires_its_own_explicit_opt_in() -> None:
+    """A separate flag from allow_private, because they carry different risk.
+
+    A database on the same VPC is an ordinary target. Loopback is the platform's
+    OWN services, including the Postgres whose Row-Level Security everything
+    else rests on — so enabling it has to be a distinct, deliberate act rather
+    than a side effect of permitting private addresses.
+    """
+    for address in ("127.0.0.1", "::1"):
+        with patch("socket.getaddrinfo", return_value=_resolving_to(address)):
+            target = resolve_and_validate(
+                "localhost", 5432, EgressPolicy(allow_loopback=True)
+            )
+            assert target.ip == address
+
+
+def test_loopback_opt_in_does_not_unblock_link_local() -> None:
+    """Cloud metadata stays blocked regardless. It is the one destination with
+    no legitimate use, and no flag should reach it."""
+    with (
+        patch("socket.getaddrinfo", return_value=_resolving_to("169.254.169.254")),
+        pytest.raises(EgressBlockedError, match="blocked range"),
+    ):
+        resolve_and_validate(
+            "metadata.internal", 80, EgressPolicy(allow_loopback=True, allow_private=True)
+        )
+
+
 @pytest.mark.parametrize(
     "address",
     # S104 flags 0.0.0.0 as a bind-to-all-interfaces risk. Here it is a

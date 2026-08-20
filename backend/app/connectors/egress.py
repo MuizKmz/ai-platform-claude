@@ -59,8 +59,15 @@ class EgressPolicy:
     """What a connector may connect to."""
 
     # Opt-in for a database inside the same private network. Never enables
-    # link-local or loopback, which stay blocked regardless.
+    # link-local, which stays blocked regardless.
     allow_private: bool = False
+    # Opt-in for loopback, for development where the target database runs on
+    # the same host. Separate from allow_private and default-off because
+    # loopback reaches the platform's OWN services — including the Postgres
+    # whose Row-Level Security everything else depends on. Enabling this in a
+    # real deployment would let a connector read as a role it was never
+    # granted.
+    allow_loopback: bool = False
     # If non-empty, ONLY these hostnames may be used. An allowlist is the strong
     # form; the IP checks below remain as a backstop against a permitted name
     # resolving somewhere it should not.
@@ -117,6 +124,9 @@ def _assert_permitted(address: str, host: str, policy: EgressPolicy) -> None:
         ip = ipaddress.ip_address(address)
     except ValueError as exc:
         raise EgressBlockedError(f"Host {host!r} resolved to an unparseable address.") from exc
+
+    if policy.allow_loopback and ip.is_loopback:
+        return
 
     for network in _ALWAYS_BLOCKED:
         if ip in network:

@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     # Required with no default: a shared default key protects nobody.
     credential_encryption_key: str = ""
 
+    # Permit connectors to reach loopback. Development only: the analytics
+    # database runs on localhost here, and egress control blocks loopback by
+    # design because a connector reaching the platform's own Postgres would
+    # bypass every guarantee built on top of it.
+    #
+    # Off by default so a deployment that forgets to set it is safe rather than
+    # convenient.
+    allow_loopback_connectors: bool = False
+
     # --- Console ----------------------------------------------------------
     # Origins the browser console is served from. An ALLOWLIST, never "*":
     # this API is authenticated by a bearer token, and a wildcard origin would
