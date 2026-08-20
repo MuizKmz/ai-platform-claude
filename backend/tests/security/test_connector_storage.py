@@ -132,7 +132,15 @@ def test_the_same_slug_may_exist_in_two_tenants(engine: Engine) -> None:
 
     with engine.connect() as conn:
         total = conn.execute(
-            text("SELECT count(*) FROM connector WHERE slug = 'analytics'")
+            # Scoped to this test's tenants. An unscoped count also sees real
+            # connectors on a developer's machine, which made this fail with
+            # 3 == 2 the moment one existed — a test reaching outside its own
+            # fixtures, which is the same mistake that once had a test delete
+            # real tenant rows.
+            text(
+                "SELECT count(*) FROM connector WHERE slug = 'analytics' AND tenant_id IN (:a, :b)"
+            ),
+            {"a": TENANT, "b": OTHER},
         ).scalar()
     assert total == 2
 

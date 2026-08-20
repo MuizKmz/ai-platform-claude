@@ -89,19 +89,62 @@ def test_preflight_permits_the_authorization_header(client: TestClient) -> None:
     assert "authorization" in allowed_headers
 
 
-def test_write_methods_beyond_the_api_surface_are_not_advertised(
-    client: TestClient,
-) -> None:
-    """PUT and PATCH are not used by any endpoint, so they are not offered.
+def _methods_the_api_serves() -> set[str]:
+    """Every HTTP method some endpoint actually serves.
 
-    Not a security boundary — a browser refusing a method proves nothing about
-    the server. It keeps the advertised surface honest.
+    Read from the OpenAPI schema rather than by walking `app.routes`: this
+    FastAPI version wraps included routers in objects whose `methods` is None,
+    so a naive walk reports only the docs endpoints — GET and HEAD — and every
+    assertion built on it passes vacuously. That is exactly the mistake this
+    file exists to catch, and it was made here first.
     """
+    from app.main import app
+
+    spec = app.openapi()
+    return {method.upper() for path in spec["paths"].values() for method in path}
+
+
+def _advertised_methods(client: TestClient) -> set[str]:
     response = client.options(
         "/v1/me",
         headers={"Origin": ALLOWED, "Access-Control-Request-Method": "GET"},
     )
+    return {
+        m.strip().upper()
+        for m in response.headers.get("access-control-allow-methods", "").split(",")
+        if m.strip()
+    }
 
-    allowed = response.headers.get("access-control-allow-methods", "").upper()
-    assert "PUT" not in allowed
-    assert "PATCH" not in allowed
+
+def test_every_method_the_api_uses_is_advertised(client: TestClient) -> None:
+    """The allowlist must cover every verb some endpoint serves.
+
+    Derived rather than hardcoded, because the hardcoded version of this test
+    caused the bug it was meant to prevent: it asserted PATCH was absent, which
+    was correct when written since no endpoint used one. The integrations API
+    then added PATCH and the allowlist was not updated.
+
+    The failure mode is invisible from the server side. The browser's PREFLIGHT
+    gets 400 "Disallowed CORS method" and the real request is never sent, so
+    curl works perfectly, every test passes, and the feature is broken only in
+    a browser.
+    """
+    missing = _methods_the_api_serves() - _advertised_methods(client)
+    assert not missing, (
+        f"endpoints serve {sorted(missing)} but CORS does not advertise it — "
+        "the browser preflight will 400 while curl succeeds"
+    )
+
+
+def test_methods_no_endpoint_serves_are_not_advertised(client: TestClient) -> None:
+    """The complement: the advertised surface stays honest.
+
+    Not a security boundary — a browser refusing a method proves nothing about
+    the server, and the endpoint's own routing is what actually refuses. This
+    keeps the allowlist from drifting into a wildcard by accretion.
+
+    OPTIONS is permitted regardless: CORS requires it and no endpoint declares
+    it.
+    """
+    extra = _advertised_methods(client) - _methods_the_api_serves() - {"OPTIONS"}
+    assert not extra, f"CORS advertises {sorted(extra)}, which no endpoint serves"

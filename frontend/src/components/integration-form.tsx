@@ -83,7 +83,11 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
     if (kind === "sql") {
       return {
         host,
-        port: Number(port),
+        // A blank field makes Number("") NaN, and JSON.stringify writes NaN
+        // as a bare literal — invalid JSON, which the server rejects as a 400
+        // with no useful message. Send null instead and let the API's
+        // validation produce a readable 422.
+        port: port.trim() === "" || Number.isNaN(Number(port)) ? null : Number(port),
         database,
         username,
         schema_name: schemaName,

@@ -43,7 +43,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    # Every method any endpoint here actually uses. An allowlist missing a
+    # method fails as a 400 on the browser's PREFLIGHT, before the request is
+    # sent — so the endpoint looks broken while curl against it works
+    # perfectly. test_cors.py pins this list against the routes.
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
