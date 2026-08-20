@@ -178,6 +178,28 @@ export const api = {
       method: "POST",
     }),
 
+  // --- users ----------------------------------------------------------------
+  // Admin-only. `allowed_labels` is the permission set retrieval filters on, so
+  // editing it here is granting or revoking access, not editing a profile.
+
+  users: () => request<User[]>("/v1/users"),
+
+  /** Labels some document or connector actually uses, so the UI can offer them
+   *  rather than invite a typo that authorizes nothing. */
+  knownLabels: () => request<string[]>("/v1/users/labels"),
+
+  createUser: (body: UserCreate) =>
+    request<User>("/v1/users", { method: "POST", body: JSON.stringify(body) }),
+
+  updateUser: (id: string, body: UserUpdate) =>
+    request<User>(`/v1/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteUser: (id: string) =>
+    request<void>(`/v1/users/${id}`, { method: "DELETE" }),
+
   // --- observability --------------------------------------------------------
   // Admin-only. Both endpoints return records ABOUT users rather than for
   // them, and the API enforces the role — this client does not pre-check it.
@@ -280,6 +302,26 @@ export interface AgentResponse {
    *  run went the way it did — an agent with one tool cannot answer a
    *  two-source question however well it plans. */
   available_tools: string[];
+}
+
+export interface User {
+  id: string;
+  email: string;
+  roles: string[];
+  /** The permission set. Empty means this person can see nothing. */
+  allowed_labels: string[];
+  created_at: string;
+}
+
+export interface UserCreate {
+  email: string;
+  roles: string[];
+  allowed_labels: string[];
+}
+
+export interface UserUpdate {
+  roles?: string[];
+  allowed_labels?: string[];
 }
 
 export interface Integration {

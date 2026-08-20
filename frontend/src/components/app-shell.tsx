@@ -11,6 +11,7 @@ import {
   MessagesSquare,
   Sparkles,
   Terminal,
+  Users,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ const NAV = [
   { href: "/agent", label: "Agent", icon: Sparkles },
   { href: "/knowledge", label: "Knowledge", icon: FileText },
   { href: "/integrations", label: "Integrations", icon: Database },
+  { href: "/users", label: "Users", icon: Users },
   { href: "/traces", label: "Traces", icon: Activity },
 ] as const;
 
