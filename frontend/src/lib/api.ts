@@ -208,6 +208,41 @@ export const api = {
 
   audit: (limit = 50, deniedOnly = false) =>
     request<AuditEntry[]>(`/v1/audit?limit=${limit}&denied_only=${deniedOnly}`),
+
+  // --- approvals ------------------------------------------------------------
+  // The queue between a proposed write and a performed one. Listing is open to
+  // any authenticated user — a person who proposed an action should see what
+  // happened to it — while deciding is admin-only, enforced by the API.
+
+  approvals: (pendingOnly = false, limit = 50) =>
+    request<Approval[]>(
+      `/v1/approvals?pending_only=${pendingOnly}&limit=${limit}`,
+    ),
+
+  /** The exact payload that would be sent. Touches no target system — the
+   *  name is literal. */
+  dryRun: (id: string) => request<DryRun>(`/v1/approvals/${id}/dry-run`),
+
+  /** Approves AND executes. There is no separate "run it" step, deliberately:
+   *  a failure should land in front of whoever just authorised it. */
+  approve: (id: string, note?: string) =>
+    request<ExecutionResult>(`/v1/approvals/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
+
+  reject: (id: string, note?: string) =>
+    request<Approval>(`/v1/approvals/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
+
+  /** Undo an executed write, where the target supports it. */
+  compensate: (id: string) =>
+    request<ExecutionResult>(`/v1/approvals/${id}/compensate`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
 };
 
 // --- response shapes --------------------------------------------------------
@@ -373,6 +408,62 @@ export interface IntegrationTestResult {
    *  driver messages on purpose. */
   error: string | null;
   duration_ms: number;
+}
+
+export interface Approval {
+  id: string;
+  status:
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "executed"
+    | "failed"
+    | "expired";
+  tool_name: string;
+  connector_slug: string;
+  summary: string;
+  target_method: string;
+  target_path: string;
+  requested_by_email: string;
+  reason: string | null;
+  decided_by_email: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  executed_at: string | null;
+  response_status: number | null;
+  error: string | null;
+  compensated_at: string | null;
+  created_at: string;
+  expires_at: string;
+  trace_id: string | null;
+}
+
+export interface DryRun {
+  id: string;
+  status: string;
+  summary: string;
+  method: string;
+  path: string;
+  /** The literal request body. Not a rendering of it — a rendering is a second
+   *  representation, and two representations can disagree. */
+  payload: Record<string, unknown>;
+  connector_slug: string;
+  /** Where it would actually go. "Create a ticket" means something different
+   *  against a staging host. */
+  target_base_url: string | null;
+  idempotency_key: string;
+  requested_by_email: string;
+  reason: string | null;
+  expires_at: string;
+  actionable: boolean;
+}
+
+export interface ExecutionResult {
+  id: string;
+  status: string;
+  response_status: number;
+  response_body: Record<string, unknown> | null;
+  idempotency_key: string;
 }
 
 export interface Span {

@@ -25,9 +25,12 @@ One governed AI platform with pluggable enterprise connectors — not N separate
 | **5 — REST connector** | ✅ Complete. GET-only HTTP, circuit breaker, config-driven endpoints — and `base.py` unchanged |
 | **6 — Integration console** | ✅ Complete. Next.js control plane: chat with citations, knowledge management, trace and audit viewers |
 | **7 — Agent orchestration** | ✅ Complete. Multi-tool reasoning with hard limits, invocation-time authorization, and durable state |
+| **9 — Governed writes** | ✅ Complete. Approval queue, dry-run, idempotency keys, compensating actions — the agent proposes, a human decides |
 | **8 — Security & reliability** | ✅ Complete. Rate limits and budgets, PII detection and trace redaction, retention, red-team corpus in CI, dependency scanning, verified restore |
 
-**No write operations.** That is deliberate — Phase 9 adds them behind human approval.
+**Writes go through an approval queue.** The agent proposes; a named human approves; the
+action runs. No code path reaches a write without a recorded approval — verified by a test
+that scans the import graph, not by reading the code.
 See the [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
 
 ### Security guarantees currently enforced

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Activity,
+  CheckSquare,
   Database,
   FileText,
   LogOut,
@@ -37,6 +38,7 @@ const NAV = [
   { href: "/agent", label: "Agent", icon: Sparkles },
   { href: "/knowledge", label: "Knowledge", icon: FileText },
   { href: "/integrations", label: "Integrations", icon: Database },
+  { href: "/approvals", label: "Approvals", icon: CheckSquare },
   { href: "/users", label: "Users", icon: Users },
   { href: "/traces", label: "Traces", icon: Activity },
 ] as const;

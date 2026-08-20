@@ -96,6 +96,46 @@ Grant `SELECT` on **curated views only**, never on base tables. That grant is
 the actual security boundary — everything the platform does in front of it is a
 fast filter, not the control.
 
+### Enabling a write tool
+
+Writes are **off by default**. `ENABLED_WRITE_TOOLS` is empty, which means the
+agent has no write tool at all — not one it is refused, one that does not exist.
+
+To enable the ticket tool, in `.env`:
+
+```
+ENABLED_WRITE_TOOLS=create_ticket
+```
+
+Then restart. The agent can now *propose* a ticket; it still cannot create one.
+
+**The write target is a connector.** Add it under Integrations, kind `REST`,
+pointing at the business API. The demo target is:
+
+```powershell
+cd backend
+uv run --with fastapi --with uvicorn python -m uvicorn main:app --port 9100 --app-dir ..\infra\demo-api
+```
+
+### Approving an action
+
+Console → **Approvals**. Each row shows what was proposed, by whom, and when.
+
+Click **Review** to see the exact payload that would be sent — there is
+deliberately no approve button on the list row. Approving a one-line summary is
+approving a sentence, and the sentence is not what reaches the target system.
+
+Approving requires `admin`, and **you cannot approve your own proposal**. The
+mechanism is a second pair of eyes; an admin approving their own request is one
+pair looking twice.
+
+Approving executes immediately. A failure lands in front of the person who just
+authorised it, which is where it belongs.
+
+**Undo** appears on an executed action when the target supports reversal. The
+row stays `executed` and gains a `compensated_at` — "done and then undone" and
+"never happened" are different facts.
+
 ### Checking spend
 
 ```powershell

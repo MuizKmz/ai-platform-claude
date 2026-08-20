@@ -28,8 +28,18 @@ with zero successful escalations, dependency scanning, and a backup whose restor
 actually performed. Security docs: [THREAT_MODEL](docs/THREAT_MODEL.md),
 [DATA_POLICY](docs/DATA_POLICY.md), [RUNBOOK](docs/RUNBOOK.md).
 
-There are still **no write operations**. Do not add any — that is Phase 9, and it needs
-the approval model that phase specifies.
+**Phase 9 complete — governed writes.** The agent can *propose* an action; it cannot
+perform one. A `WriteTool` has no execution code at all — `run()` records a pending
+`approval_request` and returns. Execution lives in `tools/approval.py`, which only
+`api/v1/approvals.py` may import, enforced by a test that scans the import graph.
+
+Write tools are **off by default** (`ENABLED_WRITE_TOOLS` is empty). Proposing needs the
+`analyst` role; approving needs `admin`, and a requester cannot approve their own request.
+Writes go through business APIs only — never generated SQL, and Phase 4's read-only role
+is unchanged.
+
+Do not add an autonomous write path, a "trusted agent" tier, or bulk operations. If a
+change makes `execute_approved` reachable from the agent, the phase's guarantee is gone.
 
 Tool authorization is re-checked at every invocation in `tools/base.py`. Never cache it,
 never trust what the model requested, and never let a tool be invoked outside

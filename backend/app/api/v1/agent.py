@@ -43,10 +43,15 @@ from app.llm.providers.openai_provider import OpenAIProvider
 from app.observability.tracing import new_trace_id, trace
 from app.tools.base import ToolRegistry
 from app.tools.builtin import QueryDatabaseTool, SearchKnowledgeTool
+from app.tools.write_tools import build_write_tools
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["agent"])
+
+# The connector write proposals target. One for now; a deployment with several
+# write targets would carry the slug on the tool rather than here.
+WRITE_CONNECTOR_SLUG = "demo"
 
 
 def get_llm() -> LLMProvider:
@@ -139,6 +144,18 @@ def _build_registry(session: Session, principal: Principal, llm: LLMProvider) ->
         principal.tenant_id,
         SearchKnowledgeTool(session, get_embedding_provider(), ("public",)),
     )
+
+    # Write tools, if any are enabled. Usually none: ENABLED_WRITE_TOOLS is
+    # empty by default, so this loop registers nothing and the agent has no way
+    # to propose an action.
+    #
+    # Registering one does NOT give the agent the ability to write. A write tool
+    # can only create a pending approval_request; the executor lives in
+    # tools/approval.py, which nothing here imports and nothing here can reach.
+    for write_tool in build_write_tools(
+        session, connector_slug=WRITE_CONNECTOR_SLUG, labels=("operations",)
+    ):
+        registry.register(principal.tenant_id, write_tool)
 
     # The SQL connector is optional: a deployment without an analytics database
     # should still get an agent that can search documents.
