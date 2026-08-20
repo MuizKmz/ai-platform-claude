@@ -73,10 +73,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <>
       <div className="gradient-mesh" aria-hidden />
 
-      <div className="flex min-h-dvh">
+      <div className="flex h-dvh overflow-hidden">
         {/* Darker than the content it frames, so the eye settles on the working
             area rather than the navigation. */}
-        <aside className="bg-sidebar/70 border-sidebar-border flex w-56 shrink-0 flex-col border-r backdrop-blur-xl">
+        <aside className="bg-sidebar/70 border-sidebar-border flex h-full w-56 shrink-0 flex-col border-r backdrop-blur-xl">
           <div className="flex items-center gap-2.5 px-5 py-5">
             <Terminal className="text-primary size-4.5" strokeWidth={2.25} />
             <span className="text-sm font-semibold tracking-tight">EAIP</span>
@@ -136,7 +136,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1">{children}</main>
+        <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
       </div>
     </>
   );

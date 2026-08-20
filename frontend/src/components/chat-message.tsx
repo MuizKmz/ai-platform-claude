@@ -27,6 +27,12 @@ export interface Message {
  * what lets someone catch it.
  */
 export function ChatMessage({ message }: { message: Message }) {
+  // Which citation the reader has focused, if any. Lifted to this level
+  // because clicking [1] in the answer has to open the card below it — an
+  // anchor jump alone did nothing visible when the card was already on screen,
+  // which read as a broken link.
+  const [focused, setFocused] = useState<number | null>(null);
+
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -72,13 +78,18 @@ export function ChatMessage({ message }: { message: Message }) {
             <AnnotatedAnswer
               text={message.content}
               citations={response?.citations ?? []}
+              onSelect={setFocused}
             />
           </p>
         )}
       </div>
 
       {response && response.citations.length > 0 ? (
-        <CitationList citations={response.citations} />
+        <CitationList
+          citations={response.citations}
+          focused={focused}
+          onToggle={(index) => setFocused((f) => (f === index ? null : index))}
+        />
       ) : null}
 
       {response ? <ResponseMeta response={response} /> : null}
@@ -95,9 +106,11 @@ export function ChatMessage({ message }: { message: Message }) {
 function AnnotatedAnswer({
   text,
   citations,
+  onSelect,
 }: {
   text: string;
   citations: Citation[];
+  onSelect: (index: number) => void;
 }) {
   const byIndex = new Map(citations.map((c) => [c.index, c]));
   const parts = text.split(/(\[\d+\])/g);
@@ -111,40 +124,71 @@ function AnnotatedAnswer({
         if (!citation) return <span key={i}>{part}</span>;
 
         return (
-          <a
+          // A button rather than an anchor. The anchor jumped to an element
+          // already in view, so nothing moved and nothing opened — the click
+          // registered and looked ignored.
+          <button
             key={i}
-            href={`#citation-${citation.index}`}
-            className="text-primary hover:bg-primary/10 mx-0.5 rounded px-1 font-mono text-[11px] transition-colors"
-            title={citation.document_title}
+            type="button"
+            onClick={() => onSelect(citation.index)}
+            className="text-primary hover:bg-primary/20 bg-primary/10 mx-0.5 rounded px-1.5 font-mono text-[11px] transition-colors"
+            title={`Show source: ${citation.document_title}`}
           >
             {citation.index}
-          </a>
+          </button>
         );
       })}
     </>
   );
 }
 
-function CitationList({ citations }: { citations: Citation[] }) {
+function CitationList({
+  citations,
+  focused,
+  onToggle,
+}: {
+  citations: Citation[];
+  focused: number | null;
+  onToggle: (index: number) => void;
+}) {
   return (
     <ul className="space-y-1.5">
       {citations.map((citation) => (
-        <CitationCard key={citation.chunk_id} citation={citation} />
+        <CitationCard
+          key={citation.chunk_id}
+          citation={citation}
+          open={focused === citation.index}
+          onToggle={() => onToggle(citation.index)}
+        />
       ))}
     </ul>
   );
 }
 
-function CitationCard({ citation }: { citation: Citation }) {
-  const [open, setOpen] = useState(false);
-
+function CitationCard({
+  citation,
+  open,
+  onToggle,
+}: {
+  citation: Citation;
+  open: boolean;
+  onToggle: () => void;
+}) {
   return (
     <li
       id={`citation-${citation.index}`}
-      className="border-border/50 bg-card/30 rounded-md border px-3 py-2"
+      className={cn(
+        "rounded-md border px-3 py-2 transition-colors",
+        // The focused card is visibly picked out, which is the feedback the
+        // anchor version never gave.
+        open
+          ? "border-primary/40 bg-primary/5"
+          : "border-border/50 bg-card/30",
+      )}
     >
       <button
-        onClick={() => setOpen((v) => !v)}
+        type="button"
+        onClick={onToggle}
         className="flex w-full items-center gap-2 text-left"
         aria-expanded={open}
       >

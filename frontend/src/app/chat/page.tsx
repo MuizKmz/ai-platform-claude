@@ -75,7 +75,7 @@ export default function ChatPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto flex h-dvh max-w-3xl flex-col px-6">
+      <div className="mx-auto flex h-full max-w-3xl flex-col px-6">
         <header className="py-5">
           <h1 className="text-base font-semibold tracking-tight">Chat</h1>
           <p className="text-muted-foreground text-xs">
