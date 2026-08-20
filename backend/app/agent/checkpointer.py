@@ -62,11 +62,29 @@ def get_checkpointer() -> Any:
         dsn = settings.database_url.replace("postgresql+psycopg://", "postgresql://")
         pool = ConnectionPool(
             conninfo=dsn,
+            # min_size 1, not the default 4. With open=True the pool
+            # establishes min_size connections up front, and four blocking
+            # connects is four chances to hang before this function returns.
+            min_size=1,
             max_size=4,
-            # autocommit because the checkpointer manages its own transactions;
-            # an outer transaction would hold a connection open for the whole
-            # run rather than per write.
-            kwargs={"autocommit": True},
+            # BOTH timeouts are load-bearing, and their absence is what made a
+            # CI job hang for ninety minutes on a step that takes two.
+            #
+            # `connect_timeout` bounds the TCP handshake — psycopg has no
+            # default, so a Postgres that accepts the connection and never
+            # answers blocks forever. `timeout` bounds waiting for a pool slot.
+            #
+            # The except below cannot help without these: a blocked connect
+            # never raises, so "degraded is acceptable" silently became "hangs
+            # indefinitely".
+            timeout=10.0,
+            kwargs={
+                # autocommit because the checkpointer manages its own
+                # transactions; an outer transaction would hold a connection
+                # open for the whole run rather than per write.
+                "autocommit": True,
+                "connect_timeout": 10,
+            },
             open=True,
         )
         saver = PostgresSaver(pool)  # type: ignore[arg-type]
