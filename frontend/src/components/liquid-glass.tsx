@@ -5,7 +5,6 @@ import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   PROFILES,
-  type GlassProfile,
   getDisplacementMap,
   supportsBackdropFilterSVG,
 } from "@/lib/liquid-glass";
@@ -53,31 +52,28 @@ export function LiquidGlass({
 
   const settings = PROFILES[profile];
 
-  // Detect once, on the client. Rendering the filter where it will be ignored
-  // wastes a map generation on every mount.
+  // One effect rather than three.
+  //
+  // Support detection, size observation, and map generation were separate
+  // effects each calling setState, which React 19 correctly flags as cascading
+  // renders: every one of them re-triggered the next. Doing the work inside the
+  // observer callback means a single state update per size change, and none at
+  // all where the browser will not render the filter anyway.
   useEffect(() => {
-    setRefracts(supportsBackdropFilterSVG());
-  }, []);
-
-  // Regenerate the map when the element's size settles.
-  useEffect(() => {
-    if (!refracts || !ref.current) return;
+    if (!supportsBackdropFilterSVG() || !ref.current) return;
+    setRefracts(true);
 
     const element = ref.current;
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
       if (!box || box.width < 8 || box.height < 8) return;
       setSize({ width: box.width, height: box.height });
+      setDisplacementMap(getDisplacementMap(box.width, box.height, settings));
     });
 
     observer.observe(element);
     return () => observer.disconnect();
-  }, [refracts]);
-
-  useEffect(() => {
-    if (!refracts || size.width === 0) return;
-    setDisplacementMap(getDisplacementMap(size.width, size.height, settings));
-  }, [refracts, size.width, size.height, settings]);
+  }, [settings]);
 
   // Pointer position drives the specular bloom. Written to CSS custom
   // properties rather than React state: this fires on every mousemove, and a
