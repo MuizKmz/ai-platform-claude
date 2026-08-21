@@ -24,6 +24,7 @@ reasonably assume it is true of this too.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -55,6 +56,8 @@ def get_checkpointer() -> Any:
         logger.warning("langgraph postgres checkpointer not installed; runs are not durable")
         return None
 
+    pool = None
+
     try:
         # psycopg3 connection string: the checkpointer manages raw connections
         # rather than going through SQLAlchemy, so the +psycopg driver prefix
@@ -84,6 +87,21 @@ def get_checkpointer() -> Any:
                 # open for the whole run rather than per write.
                 "autocommit": True,
                 "connect_timeout": 10,
+                # THIS is what a CI run hung on for twelve minutes.
+                #
+                # `saver.setup()` below runs LangGraph's CREATE TABLE
+                # migrations. Postgres defaults statement_timeout and
+                # lock_timeout to 0, so a CREATE TABLE waiting behind another
+                # connection's lock waits FOREVER — and a stack trace from
+                # pytest-timeout showed exactly that: psycopg's `waiting.wait`
+                # inside `cur.execute(migration)`.
+                #
+                # This pool is a separate psycopg pool from the SQLAlchemy
+                # engines in db/session.py, so the timeouts added there did not
+                # reach it. A connection that can block indefinitely is worth
+                # bounding wherever it is created, not wherever it is most
+                # obvious.
+                "options": "-c statement_timeout=15000 -c lock_timeout=5000",
             },
             open=True,
         )
@@ -99,6 +117,14 @@ def get_checkpointer() -> Any:
 
         _checkpointer = saver
     except Exception as exc:  # noqa: BLE001 — degraded is acceptable, crashed is not
+        # Close the pool before giving up. Without this, a failed setup leaves
+        # min_size connections open against the database and every subsequent
+        # attempt opens more — a retry loop that exhausts max_connections while
+        # reporting "degraded" each time.
+        if pool is not None:
+            with contextlib.suppress(Exception):
+                pool.close()
+
         logger.warning(
             "checkpointer unavailable (%s); runs will not survive a restart",
             type(exc).__name__,
