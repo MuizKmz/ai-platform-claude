@@ -30,7 +30,9 @@ _SLUG_LITERAL = re.compile(r"INSERT INTO tenant.*?'([a-z0-9-]+)'", re.IGNORECASE
 # sits inside a pytest.raises. Exempting them by name keeps the guard meaningful
 # elsewhere; a blanket "ignore anything in a raises block" would be easy to
 # accidentally satisfy.
-_ATTACK_STRING_FILES = frozenset({"test_sql_safety.py", "test_redteam_corpus.py"})
+_ATTACK_STRING_FILES = frozenset(
+    {"test_sql_safety.py", "test_redteam_corpus.py", "test_mysql_safety.py"}
+)
 
 # Files that genuinely EXECUTE a DROP, and are allowed to. A different category
 # from the above, and a narrower one: these do the dangerous thing rather than
@@ -183,4 +185,48 @@ def test_no_test_constructs_the_real_model_provider() -> None:
     assert not offenders, (
         "these files exercise a model endpoint without replacing the provider, "
         f"so they need an API key and will fail in CI: {offenders}"
+    )
+
+
+def test_the_attack_string_exemption_is_narrow() -> None:
+    """An exempt file may hold destructive SQL only as a string, never as work.
+
+    `_ATTACK_STRING_FILES` skips those files entirely, and until this test
+    existed nothing re-imposed the rule on them — so adding a filename to that
+    set was a way to opt out of the guard completely.
+    `test_the_drop_exemption_is_narrow` does exactly this job for the other
+    exemption; this is its counterpart, written when the set grew to a third
+    file.
+
+    The rule enforced here: a line carrying TRUNCATE or DROP must be a quoted
+    string literal — an attack string handed to a validator or a connection
+    inside pytest.raises — and not a bare statement the suite executes. A test
+    that genuinely needs to run one belongs in `_MAY_DROP_A_SCRATCH_DATABASE`,
+    where the databases it may touch are named.
+    """
+    destructive = re.compile(
+        r"\b(TRUNCATE|DROP\s+TABLE|DROP\s+DATABASE|DROP\s+VIEW)\b", re.IGNORECASE
+    )
+    offenders: list[str] = []
+
+    for path in _test_files():
+        if path.name not in _ATTACK_STRING_FILES:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            match = destructive.search(line)
+            if not match:
+                continue
+            # The statement must sit inside a quoted literal. A quote opening
+            # before the keyword and closing after it separates `"DROP TABLE x"`
+            # from an unquoted statement being executed; the surrounding
+            # pytest.raises is what the exempt file's own tests establish.
+            before, after = line[: match.start()], line[match.end() :]
+            quoted = ('"' in before or "'" in before) and ('"' in after or "'" in after)
+            if not quoted:
+                offenders.append(f"{path.relative_to(TESTS_DIR)}:{lineno}: {line.strip()}")
+
+    joined = "\n".join(offenders)
+    assert not offenders, (
+        f"destructive DDL outside a string literal in an exempt file:\n{joined}\n"
+        "Exempt files may hold these statements as attack strings only."
     )

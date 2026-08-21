@@ -55,6 +55,27 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # A real MySQL, for the same reason there is a real Postgres. Every SQL
+      # safety layer was written and proven against Postgres, and the systems
+      # this platform serves — ERP, WMS, MES, IoT — all run MySQL. Without this
+      # service, `test_write_rejected_at_db_level_too` skips for MySQL and the
+      # claim "the database refuses writes" holds only for an engine nobody
+      # uses. ADR 0008.
+      #
+      # Port 3306 here, not the 3307 used locally: a runner has no other MySQL
+      # competing for it. MYSQL_PORT below is what makes the tests agree.
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-owner-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pci-owner-password"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     env:
       APP_ENV: test
       LOG_LEVEL: WARNING
@@ -79,6 +100,11 @@ jobs:
       CORS_ORIGINS: http://localhost:3000,http://localhost:3001
       # CI's analytics database is a service container on localhost.
       ALLOW_LOOPBACK_CONNECTORS: "true"
+      # The MySQL safety tests read this rather than a Settings field: MySQL is
+      # a test fixture, not a configured dependency. Nothing in app/ connects to
+      # it — a MySQL connector is built at runtime from a row in the connector
+      # table, carrying its own host and port.
+      MYSQL_PORT: "3306"
 
     steps:
       - uses: actions/checkout@v6
@@ -127,6 +153,32 @@ jobs:
           PGHOST: localhost
           PGPORT: "5432"
         run: bash ../infra/postgres/init-analytics.sh
+
+      - name: Provision the MySQL analytics database
+        # Docker Compose mounts infra/mysql/init.sql into the entrypoint
+        # directory; a GitHub service container has no such hook, so the schema,
+        # the curated views, and the SELECT-only grant must be applied here.
+        #
+        # Without this the MySQL tests skip, and the "Security suite must
+        # actually run" step fails the build — which is correct. The grant IS
+        # the control being tested; a suite that skipped it would assert
+        # nothing while reporting green.
+        run: |
+          set -euo pipefail
+          # MYSQL_PWD rather than -p: the flag prints a warning to stderr on
+          # every invocation, which buries the errors worth reading.
+          export MYSQL_PWD=ci-owner-password
+          for _ in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP -uroot --silent; then
+              break
+            fi
+            sleep 2
+          done
+          mysql -h 127.0.0.1 -P 3306 --protocol=TCP -uroot < ../infra/mysql/init.sql
+          # Prove the read-only user exists and is reachable before the suite
+          # relies on it — otherwise a provisioning failure surfaces as dozens
+          # of confusing skips rather than one clear error here.
+          MYSQL_PWD=ci-readonly-password mysql -h 127.0.0.1 -P 3306 --protocol=TCP             -uanalytics_readonly -e "SELECT count(*) FROM curated.v_orders"
 
       - name: Apply migrations
         run: uv run alembic upgrade head

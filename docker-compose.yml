@@ -40,5 +40,32 @@ services:
       timeout: 5s
       retries: 10
 
+  # A MySQL stand-in for the systems this platform actually serves — the ERP,
+  # WMS, MES, and IoT databases all run MySQL. Every SQL safety layer was built
+  # and tested against Postgres, so "the database refuses writes" was a claim
+  # about an engine nobody uses. This is what makes it a tested one (ADR 0008).
+  #
+  # Port 3307 on the host: 3306 is commonly taken by a local MySQL, and on the
+  # deployment machine it is taken by an existing container. Same reasoning as
+  # Postgres on 5433.
+  mysql:
+    image: mysql:8.4
+    container_name: eaip-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-ci-owner-password}
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+      # Runs ONCE, only when the data volume is empty.
+      - ./infra/mysql/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD:-ci-owner-password}"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
 volumes:
   pgdata:
+  mysqldata:

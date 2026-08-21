@@ -53,6 +53,15 @@ vice versa. The token is verified, used to derive a Principal, and dropped — n
 attached to anything outbound. Write tools are excluded by TYPE, not by name, because an
 MCP client has no approval queue.
 
+**MySQL is supported alongside Postgres** (ADR 0008). The ERP, WMS, MES, and IoT systems
+this platform serves all run MySQL, so proving the safety layers against Postgres alone
+proved them for an engine nobody uses. The suite now runs against a real MySQL in CI.
+
+`SQLSettings.engine` selects the dialect and defaults to `postgres`, so a connector row
+written before the field existed keeps its meaning. The AST allowlist is **shared** between
+dialects — a construction permitted for one is permitted for both, which is what stops a
+statement being safe in Postgres and unexamined in MySQL.
+
 Tool authorization is re-checked at every invocation in `tools/base.py`. Never cache it,
 never trust what the model requested, and never let a tool be invoked outside
 `ToolRegistry.invoke`.
@@ -69,7 +78,7 @@ See [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for what ea
 ## How to run
 
 ```powershell
-docker compose up -d          # Postgres 17 + pgvector, Redis 7
+docker compose up -d          # Postgres 17 + pgvector, Redis 7, MySQL 8.4
 cd backend
 uv sync                       # installs into .venv from uv.lock
 uv run uvicorn app.main:app --reload
@@ -81,9 +90,15 @@ npm run dev                   # http://localhost:3000
 
 Health check: http://127.0.0.1:8000/health — must report `db: ok` and `redis: ok`.
 
-**Host ports on this machine are deliberately non-default** — Postgres `5433`, Redis `6380`.
-Another project and a native Memurai service hold 5432 and 6379. Container-internal ports
-are unchanged; only the published host port differs. Do not "helpfully" reset these.
+**Host ports on this machine are deliberately non-default** — Postgres `5433`, Redis `6380`,
+MySQL `3307`. Another project and a native Memurai service hold 5432 and 6379, and 3306 is
+commonly taken by a local MySQL. Container-internal ports are unchanged; only the published
+host port differs. Do not "helpfully" reset these.
+
+MySQL takes about 70 seconds to become healthy on a first start, because the entrypoint
+initialises the data directory before running `infra/mysql/init.sql`. `uv run pytest` skips
+the MySQL tests if it is not up yet — CI fails the build on that skip, but locally you just
+get a quieter run than you meant, so check `docker compose ps` if the count looks low.
 
 ## How to test
 
@@ -130,10 +145,16 @@ These are not features and are never deferred to "later". Violating one is a blo
    request body, query param, header, or LLM output.
 2. **Every row of tenant data carries `tenant_id`.** Every query filters on it. No exceptions.
 3. **Retrieval is authorization-filtered before ranking**, not after. Never retrieve then hide.
-4. **Database access for generated SQL is read-only**, enforced by a Postgres role, not by
-   string inspection. Write operations are forbidden until Phase 9. The test that proves
-   this bypasses the AST validator entirely — if it ever passes, every other SQL safety
-   test is decoration.
+4. **Database access for generated SQL is read-only**, enforced by a database grant, not by
+   string inspection. Generated SQL never writes — Phase 9's writes go through business
+   APIs behind approval, never through this path. The test that proves this bypasses the
+   AST validator entirely; if it ever passes, every other SQL safety test is decoration.
+   It exists for **both** engines: `test_sql_safety.py` and `test_mysql_safety.py`.
+
+   The engines enforce it differently. Postgres has a role with `SELECT` plus
+   `default_transaction_read_only`. **MySQL has no such role flag** — the grant alone is
+   the control, backed by a per-connection `SET SESSION TRANSACTION READ ONLY` applied by
+   a `connect` event listener (ADR 0008).
 5. **No secrets in git, logs, traces, prompts, or responses.** `.env` is gitignored; use
    `.env.example` as the template.
 6. **Every LLM/tool/retrieval call emits a trace** with a trace ID, latency, and token cost.

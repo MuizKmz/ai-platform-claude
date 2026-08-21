@@ -44,6 +44,14 @@ class SQLSettings(BaseModel):
     """Everything needed to reach one database, minus the password."""
 
     kind: Literal["sql"] = "sql"
+    # Which SQL engine. Defaults to postgres so every connector stored before
+    # MySQL support keeps working without a migration — an absent field means
+    # what it always meant.
+    #
+    # Constrained to the engines the safety validator can parse. An unknown
+    # value must fail here, at construction, rather than reaching sqlglot and
+    # being refused per-query with a confusing message.
+    engine: Literal["postgres", "mysql"] = "postgres"
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(ge=1, le=65535)
     database: str = Field(min_length=1, max_length=64)
@@ -154,6 +162,7 @@ def build_connector(
                 ),
                 statement_timeout_ms=parsed.statement_timeout_ms,
                 max_rows=parsed.max_rows,
+                engine=parsed.engine,
             )
         )
 

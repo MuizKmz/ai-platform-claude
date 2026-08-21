@@ -127,7 +127,9 @@ graph TD
     class AZ,VAL,ROLE s
 ```
 
-**Read the three red boxes as a series, not alternatives.** The AST validator will eventually be bypassed by a construction you did not anticipate. The read-only role will not be, because it is enforced by Postgres rather than by your parser. Layer 4 catches mistakes; layer 5 catches attacks.
+**Read the three red boxes as a series, not alternatives.** The AST validator will eventually be bypassed by a construction you did not anticipate. The read-only grant will not be, because it is enforced by the database rather than by your parser. Layer 4 catches mistakes; layer 5 catches attacks.
+
+*Since ADR 0008 this holds for two engines, and they are not equivalent.* Postgres backs the grant with `default_transaction_read_only`; MySQL has no role-level equivalent, so `GRANT SELECT` alone carries the weight, with a per-connection session flag behind it. The layer-5 test runs against both.
 
 **Critical dependency direction:** `SEM → GEN`, not `GEN → schema`. The model generates SQL against *curated views with documented columns*, never against raw introspected tables. This is the single largest determinant of whether text-to-SQL works — the semantic layer, not the model.
 

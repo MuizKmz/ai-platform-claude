@@ -23,7 +23,16 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
+# Dialects this validator understands. Postgres was first; MySQL arrived when
+# the target systems turned out to run it (ADR 0008).
+#
+# The allowlist below is SHARED between them, which is what keeps the two from
+# diverging: a node type permitted for one is permitted for both, so a
+# construction cannot be safe in Postgres and unexamined in MySQL. Where they
+# genuinely differ — MySQL has no schemas in the Postgres sense, only databases
+# — the difference is handled explicitly rather than by having two allowlists.
 DIALECT = "postgres"
+SUPPORTED_DIALECTS = ("postgres", "mysql")
 
 # Hard cap on returned rows. A query with no LIMIT gets one; a larger LIMIT is
 # lowered to this. Unbounded results are both a memory problem and a bulk-export
@@ -165,6 +174,15 @@ _FORBIDDEN_FUNCTIONS = frozenset(
         "xmlexec",
         "copy_from",
         "copy_to",
+        # MySQL equivalents. Mostly unreachable for a SELECT-only user, listed
+        # for the same reason the Postgres ones are: a clear early refusal
+        # beats relying on the grant alone.
+        "load_file",
+        "sys_exec",
+        "sys_eval",
+        "benchmark",
+        "sleep",
+        "master_pos_wait",
     }
 )
 
@@ -185,9 +203,23 @@ class SafeSQL:
     limit_applied: bool
 
 
-def validate(sql: str, *, max_rows: int = MAX_ROWS, schema: str = "curated") -> SafeSQL:
-    """Parse, validate, and normalise a statement, or raise UnsafeSQLError."""
-    statements = _parse(sql)
+def validate(
+    sql: str,
+    *,
+    max_rows: int = MAX_ROWS,
+    schema: str = "curated",
+    dialect: str = DIALECT,
+) -> SafeSQL:
+    """Parse, validate, and normalise a statement, or raise UnsafeSQLError.
+
+    `dialect` decides how the statement is PARSED and how it is rendered back.
+    It does not decide what is permitted — the allowlist is shared, so a
+    construction refused for Postgres is refused for MySQL too.
+    """
+    if dialect not in SUPPORTED_DIALECTS:
+        raise UnsafeSQLError(f"Unsupported SQL dialect {dialect!r}.")
+
+    statements = _parse(sql, dialect)
 
     # Layer: exactly one statement. "SELECT 1; DROP TABLE t" is two, and a driver
     # that supports multiple statements would happily run both.
@@ -212,13 +244,13 @@ def validate(sql: str, *, max_rows: int = MAX_ROWS, schema: str = "curated") -> 
 
     # Narrowed above: the top level is Select/Union/Intersect/Except, all of
     # which are exp.Query and therefore carry .limit().
-    limited, applied = _apply_limit(statement, max_rows)
+    limited, applied = _apply_limit(statement, max_rows, dialect)
     return SafeSQL(sql=limited, limit=max_rows, limit_applied=applied)
 
 
-def _parse(sql: str) -> list[exp.Expression]:
+def _parse(sql: str, dialect: str = DIALECT) -> list[exp.Expression]:
     try:
-        parsed = sqlglot.parse(sql, dialect=DIALECT)
+        parsed = sqlglot.parse(sql, dialect=dialect)
     except Exception as exc:  # noqa: BLE001 — sqlglot raises several types
         raise UnsafeSQLError("The statement could not be parsed.") from exc
 
@@ -285,7 +317,7 @@ def _assert_no_forbidden_functions(statement: exp.Expression) -> None:
             raise UnsafeSQLError(f"Function {name}() is not permitted.")
 
 
-def _apply_limit(statement: exp.Query, max_rows: int) -> tuple[str, bool]:
+def _apply_limit(statement: exp.Query, max_rows: int, dialect: str = DIALECT) -> tuple[str, bool]:
     """Ensure a LIMIT no larger than max_rows.
 
     Injected rather than merely checked: a missing LIMIT is the difference
@@ -304,12 +336,12 @@ def _apply_limit(statement: exp.Query, max_rows: int) -> tuple[str, bool]:
             # A non-literal LIMIT (a parameter or expression) cannot be compared,
             # so it is replaced with the cap rather than trusted.
             statement.set("limit", exp.Limit(expression=exp.Literal.number(max_rows)))
-            return statement.sql(dialect=DIALECT), True
+            return statement.sql(dialect=dialect), True
         if current > max_rows:
             statement.set("limit", exp.Limit(expression=exp.Literal.number(max_rows)))
             applied = True
 
-    return statement.sql(dialect=DIALECT), applied
+    return statement.sql(dialect=dialect), applied
 
 
 def _assert_only_curated_tables(statement: exp.Expression, schema: str) -> None:
