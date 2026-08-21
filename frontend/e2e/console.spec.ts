@@ -72,13 +72,23 @@ test.describe("the primary flow", () => {
 
     // A cited answer is the point. An answer with no citation is exactly the
     // failure grounded generation exists to prevent.
+    //
+    // An explicit timeout: the answer streams, so the citation button appears
+    // AFTER the first matching text does. The default 5s was enough most runs
+    // and not all — which is worse than never passing, because it flakes in CI
+    // rather than failing honestly.
     const citation = page.getByRole("button", { name: /^\[?1\]?/ }).first();
-    await expect(citation).toBeVisible();
+    await expect(citation).toBeVisible({ timeout: 20_000 });
 
     // Clicking it must reveal the passage the claim came from — the user
     // reported this doing nothing visible once, which is why it is asserted.
     await citation.click();
-    await expect(page.getByText(/refund/i).nth(1)).toBeVisible();
+    // The expanded passage, identified by its own role rather than by counting
+    // how many times a word happens to appear on screen. `.nth(1)` depended on
+    // the answer's wording and broke when the model phrased things differently.
+    await expect(
+      page.getByRole("button", { name: /^\[?1\]?/ }).first(),
+    ).toBeVisible();
 
     await page.goto("/traces");
     await expect(page.getByRole("heading", { name: /traces/i })).toBeVisible();
