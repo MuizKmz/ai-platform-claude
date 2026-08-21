@@ -163,7 +163,20 @@ jobs:
         # prints its file, line, and stack.
         run: |
           set -o pipefail
-          uv run pytest -v --timeout=120 --durations=10 -rA 2>&1 | tee /tmp/pytest.log
+          # --tb=short and -rA so a failure prints its assertion IN THE LOG.
+          # The artifact below needs credentials to download; the log does not,
+          # and a failure nobody can read is a failure nobody can fix.
+          uv run pytest -v --timeout=120 --durations=10 -rA --tb=short 2>&1 | tee /tmp/pytest.log
+
+      - name: Show what failed
+        # Runs only when Test failed, and prints the summary last so it is not
+        # buried above hundreds of passing lines.
+        if: failure()
+        run: |
+          echo "=== failures and errors ==="
+          grep -E "^(FAILED|ERROR)" /tmp/pytest.log || echo "(none matched)"
+          echo "=== last 60 lines ==="
+          tail -60 /tmp/pytest.log
 
       - name: Upload the test log
         # Always, not just on failure. A green run's log is what you compare a
