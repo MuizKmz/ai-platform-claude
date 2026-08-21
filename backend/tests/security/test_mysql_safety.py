@@ -427,3 +427,132 @@ def test_an_engine_the_validator_cannot_parse_is_refused_at_configuration() -> N
                 "username": "readonly",
             }
         )
+
+
+# --- MariaDB ------------------------------------------------------------------
+#
+# MariaDB forked from MySQL before 5.7.8 and never adopted
+# `max_execution_time`; it has `max_statement_time`, in SECONDS rather than
+# milliseconds. A connector configured with engine="mysql" points at either
+# server, and the difference does not surface until connect time — where an
+# unknown system variable raises ERROR 1193 and takes the connector down
+# entirely rather than degrading it.
+#
+# Verified against a real MariaDB 10.5 rather than assumed. The
+# security-relevant statement, `SET SESSION TRANSACTION READ ONLY`, IS
+# identical on both: a write inside such a session fails with ERROR 1792.
+#
+# These tests drive the listener with a fake cursor, so they need no MariaDB
+# container and run wherever the suite runs.
+
+
+class _FakeCursor:
+    """Records what was executed, and rejects variables a server lacks."""
+
+    def __init__(self, unknown: tuple[str, ...]) -> None:
+        self.executed: list[str] = []
+        self._unknown = unknown
+
+    def execute(self, statement: str) -> None:
+        for name in self._unknown:
+            if name in statement:
+                raise RuntimeError(f"1193 Unknown system variable '{name}'")
+        self.executed.append(statement)
+
+    def __enter__(self) -> _FakeCursor:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+class _FakeConnection:
+    def __init__(self, unknown: tuple[str, ...] = ()) -> None:
+        self.cursor_obj = _FakeCursor(unknown)
+
+    def cursor(self) -> _FakeCursor:
+        return self.cursor_obj
+
+
+def _run_listener(unknown: tuple[str, ...]) -> list[str]:
+    """Install the connect listener on a throwaway engine and fire it."""
+    from sqlalchemy import create_engine as _create_engine
+
+    from app.connectors.sql.connector import _install_mysql_session_settings
+
+    config = SQLConnectorConfig(
+        id="probe",
+        display_name="probe",
+        host="127.0.0.1",
+        port=MYSQL_PORT,
+        database="curated",
+        username="analytics_readonly",
+        password=SecretStr("unused"),
+        schema="curated",
+        required_labels=("analytics",),
+        egress=EgressPolicy(allow_private=True, allow_loopback=True),
+        engine="mysql",
+        statement_timeout_ms=5000,
+    )
+    # A URL that is never connected to; the listener is invoked directly.
+    # `connect` is a Pool event, so registered functions hang off
+    # engine.pool.dispatch rather than engine.dispatch.
+    #
+    # Only OUR listener is invoked. The sqlite dialect registers its own
+    # `connect` handler on this engine, and calling that one against a fake
+    # connection fails on an unrelated sqlite API — a failure about
+    # create_function, not about anything this test is checking.
+    engine = _create_engine("sqlite://")
+    before = set(engine.pool.dispatch.connect)
+    _install_mysql_session_settings(engine, config)
+    added = [fn for fn in engine.pool.dispatch.connect if fn not in before]
+
+    assert len(added) == 1, f"expected exactly one new connect listener, got {len(added)}"
+
+    conn = _FakeConnection(unknown)
+    added[0](conn, None)
+    engine.dispose()
+    return conn.cursor_obj.executed
+
+
+def test_read_only_is_set_before_anything_else() -> None:
+    """The security-relevant statement must not depend on the timeout working.
+
+    If the timeout were set first and raised, the connection would be left
+    writable — the one outcome this listener exists to prevent.
+    """
+    executed = _run_listener(unknown=())
+    assert executed, "the listener executed nothing"
+    assert executed[0] == "SET SESSION TRANSACTION READ ONLY"
+
+
+def test_a_mysql_server_gets_max_execution_time() -> None:
+    """Milliseconds, MySQL's name for it."""
+    executed = _run_listener(unknown=())
+    assert any("max_execution_time = 5000" in s for s in executed)
+    assert not any("max_statement_time" in s for s in executed), (
+        "both timeout forms were applied; only the server's own should be"
+    )
+
+
+def test_a_mariadb_server_falls_back_to_max_statement_time() -> None:
+    """MariaDB rejects max_execution_time, so the seconds-based name applies.
+
+    5000ms becomes 5.0 seconds. A unit error here would set a five-thousand
+    second timeout — silently useless rather than loudly broken.
+    """
+    executed = _run_listener(unknown=("max_execution_time",))
+    assert executed[0] == "SET SESSION TRANSACTION READ ONLY"
+    assert any("max_statement_time = 5.0" in s for s in executed), (
+        f"MariaDB fallback did not apply: {executed}"
+    )
+
+
+def test_a_server_with_neither_still_starts_read_only() -> None:
+    """A timeout hint is not worth refusing every connection over.
+
+    The query remains bounded by the pool timeout and by LIMIT injection, and
+    read-only — the actual guarantee — is unaffected.
+    """
+    executed = _run_listener(unknown=("max_execution_time", "max_statement_time"))
+    assert executed == ["SET SESSION TRANSACTION READ ONLY"]

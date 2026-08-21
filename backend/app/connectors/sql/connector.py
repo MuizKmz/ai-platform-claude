@@ -20,6 +20,7 @@ unanticipated construction would be the whole security model.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +40,8 @@ from app.connectors.base import (
 from app.connectors.egress import EgressPolicy, resolve_and_validate
 from app.connectors.sql.safety import MAX_ROWS, UnsafeSQLError, validate
 from app.core.security import Principal
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -101,7 +104,7 @@ def _connect_args(config: SQLConnectorConfig) -> dict[str, object]:
 
 
 def _install_mysql_session_settings(engine: Engine, config: SQLConnectorConfig) -> None:
-    """Make every MySQL connection read-only and time-bounded.
+    """Make every MySQL or MariaDB connection read-only and time-bounded.
 
     Postgres carries this on the ROLE — `default_transaction_read_only` — so a
     connection starts read-only whether or not the code remembers to ask. MySQL
@@ -121,10 +124,48 @@ def _install_mysql_session_settings(engine: Engine, config: SQLConnectorConfig) 
     @event.listens_for(engine, "connect")
     def _apply(dbapi_connection: Any, _record: Any) -> None:
         with dbapi_connection.cursor() as cursor:
+            # The security-relevant statement, and it is identical on MySQL and
+            # MariaDB — verified against MariaDB 10.5, where a write inside such
+            # a session fails with ERROR 1792.
             cursor.execute("SET SESSION TRANSACTION READ ONLY")
-            # MySQL bounds statements with max_execution_time (milliseconds),
-            # and it applies to SELECTs — which is all this connector issues.
-            cursor.execute(f"SET SESSION max_execution_time = {int(config.statement_timeout_ms)}")
+
+            # The statement timeout is NOT identical, and getting it wrong
+            # raises ERROR 1193 on connect — which would take the connector
+            # down entirely rather than degrading it.
+            #
+            #   MySQL    max_execution_time   milliseconds
+            #   MariaDB  max_statement_time   SECONDS
+            #
+            # MariaDB forked before MySQL 5.7.8 added max_execution_time and
+            # implemented its own under a different name and unit. Both are
+            # tried, because a connector is configured with `engine="mysql"`
+            # for either server and the difference is not visible until connect
+            # time.
+            timeout_ms = int(config.statement_timeout_ms)
+            applied = False
+            for statement in (
+                f"SET SESSION max_execution_time = {timeout_ms}",
+                f"SET SESSION max_statement_time = {timeout_ms / 1000}",
+            ):
+                try:
+                    cursor.execute(statement)
+                except Exception as exc:  # noqa: BLE001 — driver-specific error types
+                    # Unknown variable on this server; the other form applies.
+                    logger.debug("timeout variable not supported: %s (%s)", statement, exc)
+                else:
+                    applied = True
+                    break
+
+            if not applied:
+                # Neither name exists. Worth a warning rather than silence — a
+                # query is still bounded by the pool timeout and by LIMIT
+                # injection, so this degrades rather than breaks, but an
+                # operator should not have to discover it from a slow query.
+                logger.warning(
+                    "no statement timeout could be set on %s; "
+                    "server supports neither max_execution_time nor max_statement_time",
+                    config.id,
+                )
 
 
 class SQLConnector(Connector):
