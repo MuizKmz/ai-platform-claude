@@ -166,6 +166,39 @@ SELECT
 FROM iot_db.production_processes p;
 
 
+-- --- the metric catalogue ---------------------------------------------------
+--
+-- What metrics exist, how much of each, and over what period. This view is for
+-- the MODEL rather than for a person.
+--
+-- Without it, a question like "what was the average temperature" becomes a
+-- guess at the metric name — `temp`, `Temperature`, `temp_c` — and a guess
+-- returns zero rows, which reads as "no data" rather than "wrong name". With
+-- it, the model can look up the exact spelling first.
+--
+-- It also exposes the date range per metric, which matters here: several
+-- metrics stopped being collected. `co2` ends 2026-07-31 and the OEE counts
+-- end 2026-06-19, so a question about "this month" must be answerable with
+-- "that metric stopped in July" rather than with an empty result presented as
+-- a zero.
+--
+-- Cheap to compute: it aggregates an indexed column, and the result is ~14
+-- rows.
+
+CREATE OR REPLACE VIEW iot_curated.v_metric_catalogue AS
+SELECT
+  m.metric,
+  COUNT(*)            AS reading_count,
+  MIN(m.event_time)   AS first_reading,
+  MAX(m.event_time)   AS last_reading,
+  COUNT(DISTINCT m.device_id) AS device_count
+FROM iot_db.device_metrics m
+JOIN iot_db.devices d
+  ON d.device_id = m.device_id
+ AND d.is_deleted = 0
+GROUP BY m.metric;
+
+
 -- --- the read-only user -----------------------------------------------------
 --
 -- THIS IS THE CONTROL. Everything the application does in front of it — the
@@ -190,12 +223,21 @@ GRANT SELECT ON iot_curated.* TO 'eaip_readonly'@'localhost';
 -- A view reads its base tables as the view's DEFINER, so this user needs no
 -- rights on `iot_db` — and must not have any.
 --
--- GRANT USAGE first, then REVOKE: MariaDB raises ERROR 1141 when revoking a
--- privilege the user does not hold, and unlike MySQL 8 it has no
--- `REVOKE IF EXISTS`. Verified against MariaDB 10.5 rather than assumed.
--- USAGE means "no privileges" — it only creates the grant record that REVOKE
--- then needs to find.
-GRANT USAGE ON iot_db.* TO 'eaip_readonly'@'localhost';
-REVOKE ALL PRIVILEGES ON iot_db.* FROM 'eaip_readonly'@'localhost';
+-- There is deliberately NO `REVOKE ... ON iot_db.*` here. The user is created
+-- by this script and granted only `iot_curated.*`, so it never holds anything
+-- on `iot_db` to revoke — and MariaDB raises ERROR 1141 when asked to revoke a
+-- privilege that is not held. It has no `REVOKE IF EXISTS` (MySQL 8.0.16+
+-- only), and `GRANT USAGE ON iot_db.*` does not help: MariaDB records USAGE
+-- globally rather than per-database, so it creates no database-level row for a
+-- REVOKE to find. Both were verified against MariaDB 10.5, and both failed.
+--
+-- What replaces the revoke is verification. Run this afterwards:
+--
+--   SHOW GRANTS FOR 'eaip_readonly'@'localhost';
+--
+-- The expected output is exactly two lines — USAGE ON *.* (which means "no
+-- privileges", not "some privileges"), and SELECT ON `iot_curated`.*. Any
+-- third line, and particularly anything naming `iot_db`, means this user can
+-- reach more than it should.
 
 FLUSH PRIVILEGES;
