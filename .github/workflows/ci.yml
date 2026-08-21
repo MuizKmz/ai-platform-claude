@@ -161,7 +161,20 @@ jobs:
         # so the log could not say which test was responsible. Verbose output
         # names each test as it starts; pytest-timeout kills one that hangs and
         # prints its file, line, and stack.
-        run: uv run pytest -v --timeout=120 --durations=10
+        run: |
+          set -o pipefail
+          uv run pytest -v --timeout=120 --durations=10 -rA 2>&1 | tee /tmp/pytest.log
+
+      - name: Upload the test log
+        # Always, not just on failure. A green run's log is what you compare a
+        # red one against, and the logs API needs credentials this workflow
+        # does not have — an artifact is readable by anyone who can see the run.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log
+          path: /tmp/pytest.log
+          retention-days: 7
 
       - name: Red-team corpus
         # Already covered by the run above; repeated as its own step because the
