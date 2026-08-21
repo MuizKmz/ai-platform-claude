@@ -32,6 +32,9 @@ dependencies = [
 dev = [
     "pytest>=8.3,<9.0",
     "pytest-asyncio>=0.24,<1.0",
+    # Kills a hanging test and NAMES it. Without this a stall is a silent
+    # twelve-minute CI step with no output at all, which is what one was.
+    "pytest-timeout>=2.3,<3.0",
     "httpx>=0.28,<1.0",
     "ruff>=0.8,<1.0",
     "mypy>=1.13,<2.0",
@@ -44,6 +47,16 @@ dev = [
 testpaths = ["tests"]
 # The security suite is named so CI can report on it separately and so it can
 # never be quietly skipped: `pytest -m security` must stay green forever.
+# A test that hangs is worse than one that fails: it produces no output at all.
+# One CI run sat on `pytest -q` for twelve minutes without printing a single
+# dot, and the log said nothing about which test was responsible.
+#
+# 120s is roughly 25x the slowest real test (5.1s), so it cannot fire on a
+# machine that is merely slow. `thread` method rather than `signal` because
+# signal-based timeouts do not work on Windows.
+timeout = 120
+timeout_method = "thread"
+
 markers = [
     "security: tenant isolation and authorization guarantees",
     # Shells out to docker and creates databases. Deselect with -m 'not slow'.

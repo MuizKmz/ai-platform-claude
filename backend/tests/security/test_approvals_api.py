@@ -604,11 +604,23 @@ def test_concurrent_approvals_execute_once(client: TestClient, engine: Engine) -
         with lock:
             statuses.append(response.status_code)
 
-    threads = [threading.Thread(target=attempt) for _ in range(3)]
+    # daemon=True and a join timeout, both deliberate.
+    #
+    # These threads contend on a FOR UPDATE row lock. If two transactions ever
+    # deadlock, a bare join() waits forever and pytest produces no output at
+    # all — which is what a CI run that sat on this step for twelve minutes
+    # printing nothing looks like. Daemon threads cannot keep the process
+    # alive, and the timeout turns a deadlock into a readable assertion
+    # failure rather than a silent stall.
+    threads = [threading.Thread(target=attempt, daemon=True) for _ in range(3)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=30)
+
+    assert all(not t.is_alive() for t in threads), (
+        "an approval thread did not finish within 30s — the row lock deadlocked"
+    )
 
     assert sorted(statuses) == [200, 409, 409], (
         f"expected one winner and two conflicts, got {sorted(statuses)}"

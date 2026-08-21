@@ -156,7 +156,12 @@ jobs:
           exit 1
 
       - name: Test
-        run: uv run pytest -q
+        # -v and --timeout so a stall is diagnosable rather than silent. One run
+        # sat here for twelve minutes and printed nothing at all — not a dot —
+        # so the log could not say which test was responsible. Verbose output
+        # names each test as it starts; pytest-timeout kills one that hangs and
+        # prints its file, line, and stack.
+        run: uv run pytest -v --timeout=120 --durations=10
 
       - name: Red-team corpus
         # Already covered by the run above; repeated as its own step because the

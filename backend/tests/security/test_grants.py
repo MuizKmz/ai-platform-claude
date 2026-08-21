@@ -154,3 +154,45 @@ def test_the_application_role_cannot_bypass_rls(app_rw: Engine) -> None:
         ).one()
     assert not row.rolsuper, "the application role is a superuser; RLS does not apply to it"
     assert not row.rolbypassrls, "the application role bypasses RLS"
+
+
+# --- nothing waits forever ----------------------------------------------------
+
+
+def test_both_engines_bound_statements_and_locks() -> None:
+    """A query, and a wait for a row lock, both have a ceiling.
+
+    Postgres defaults both to 0 — unlimited. The SQL connector has always set a
+    statement_timeout for GENERATED queries; the application's own connection
+    never did, which is the more dangerous omission because it affects every
+    request rather than one tool.
+
+    A `FOR UPDATE` blocked behind a stuck transaction would wait forever, and
+    nothing in the stack would interrupt it. Approve and reject both take row
+    locks, so this is on the write path.
+    """
+    # The APPLICATION's engines, not one this test builds. The first version
+    # used the local app_rw fixture, which creates its own engine without the
+    # connect options — so it tested a connection the application never uses
+    # and failed for the wrong reason.
+    from app.db.session import engine as app_engine
+    from app.db.session import owner_engine
+
+    for name, target in (("app_rw", app_engine), ("owner", owner_engine)):
+        with target.connect() as conn:
+            statement = conn.execute(text("SHOW statement_timeout")).scalar()
+            lock = conn.execute(text("SHOW lock_timeout")).scalar()
+
+        assert statement not in ("0", None), f"{name} has no statement timeout"
+        assert lock not in ("0", None), f"{name} has no lock timeout"
+
+
+def test_the_lock_timeout_is_shorter_than_the_statement_timeout() -> None:
+    """Waiting seconds for a lock means someone else holds it.
+
+    Failing fast with a readable error beats a request that hangs until a
+    client gives up — so the lock ceiling is the tighter of the two.
+    """
+    from app.db.session import LOCK_TIMEOUT_MS, STATEMENT_TIMEOUT_MS
+
+    assert LOCK_TIMEOUT_MS < STATEMENT_TIMEOUT_MS
