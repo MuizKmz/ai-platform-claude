@@ -1,0 +1,112 @@
+# Production overlay. Applied ON TOP of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The base file stays a development file. Nothing here changes local work,
+# which is what keeps `docker compose up -d` on a laptop from acquiring
+# production semantics nobody wanted.
+#
+# Two things this changes, and both exist because the deployment target is a
+# SHARED, PUBLICLY ADDRESSED host — the aaPanel box already running an IoT
+# platform, a WMS, and a dozen client databases.
+#
+#
+# 1. PORTS BIND TO LOOPBACK ONLY
+#
+# In the base file a port is published as "5433:5432", which Docker binds to
+# 0.0.0.0 — every interface, including the public one. On a laptop that is
+# invisible. On a host with a public IP it means the database is reachable from
+# the internet.
+#
+# Docker also writes its own iptables rules, ahead of UFW and ahead of whatever
+# aaPanel's firewall page shows. A firewall rule you can see in the panel does
+# NOT reliably close a Docker-published port. The binding is the control.
+#
+# "127.0.0.1:5433:5432" binds to loopback: reachable from the host itself, from
+# nowhere else. To reach the console from a laptop, tunnel:
+#
+#   ssh -L 3000:127.0.0.1:3000 -L 8000:127.0.0.1:8000 root@<host>
+#
+# then open http://127.0.0.1:3000 locally. The traffic rides the SSH session,
+# which is already encrypted and already authenticated.
+#
+#
+# 2. MEMORY AND CPU LIMITS
+#
+# Nothing in the base file limits either. Postgres and MySQL will each grow to
+# fill what is available, and the kernel's OOM killer does not ask which
+# container matters — it kills whatever scores highest, which on a busy box may
+# be somebody's production MariaDB rather than ours.
+#
+# The user's standing instruction for this deployment is "make sure when we
+# deploy didnt broke the others". These limits are that instruction expressed
+# in a form the kernel enforces.
+#
+# Sized for a small VM (4 GB). If the host has more, raise them deliberately
+# rather than removing them — an unbounded container on a shared host is the
+# thing being prevented, not a small one.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    deploy:
+      resources:
+        limits:
+          # Postgres is the platform's own database: documents, chunks,
+          # embeddings, traces, and the agent checkpoints. It gets the largest
+          # share because pgvector similarity search is the memory-hungry part.
+          memory: 1g
+        reservations:
+          memory: 256m
+    # shm_size matters for Postgres specifically: parallel queries and large
+    # sorts use shared memory, and Docker's 64 MB default causes errors that
+    # look like corruption but are not.
+    shm_size: 256mb
+    logging: &logging
+      # Without this, container logs grow until the disk fills. On a shared
+      # host that takes everything down, not just us.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    # Redis holds rate-limit counters and budget tallies — small, and all of it
+    # reconstructible. maxmemory with an eviction policy is better than an OOM
+    # kill: losing a counter degrades a limit, losing the process fails every
+    # request that needs one.
+    command: >-
+      redis-server
+      --maxmemory 200mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 64m
+    logging: *logging
+
+  # The bundled MySQL is a TEST FIXTURE — it exists so the safety suite can run
+  # against a real MySQL. It is not part of the running platform and should not
+  # be started in production.
+  #
+  # It cannot simply be omitted: a service absent from the overlay still
+  # inherits the base file and starts. `profiles` is what makes it opt-in — it
+  # now starts only with `--profile testing`, so a plain `up -d` leaves it out.
+  #
+  # The IoT data comes from the host's own MariaDB, reached over the loopback
+  # interface as a connector row. Not from here.
+  mysql:
+    profiles: ["testing"]
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3307}:3306"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    logging: *logging
