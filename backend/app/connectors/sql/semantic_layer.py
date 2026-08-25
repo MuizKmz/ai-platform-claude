@@ -26,7 +26,9 @@ decision cannot be introspected out of a database.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -73,11 +75,23 @@ class Example:
 
 
 @dataclass(frozen=True)
+class IoTMetricTemplate:
+    """A reviewed, parameter-free mapping for a common IoT aggregate."""
+
+    aliases: tuple[str, ...]
+    device_name: str
+    metric: str
+    devices_view: str
+    metrics_view: str
+
+
+@dataclass(frozen=True)
 class SemanticLayer:
     views: tuple[ViewDoc, ...] = ()
     joins: tuple[JoinPath, ...] = ()
     metrics: tuple[Metric, ...] = ()
     examples: tuple[Example, ...] = ()
+    iot_metric_templates: tuple[IoTMetricTemplate, ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_prompt(self) -> str:
@@ -137,6 +151,187 @@ class SemanticLayer:
                 parts.append("")
 
         return "\n".join(parts).strip()
+
+
+def from_discovered_schema(
+    discovered: list[dict[str, Any]],
+    *,
+    connector_name: str,
+    reviewed_training: dict[str, Any] | None = None,
+) -> SemanticLayer:
+    """Build a safe baseline semantic layer from approved database metadata.
+
+    A connector's reader role and configured schema decide what arrives here;
+    this function never inspects base tables or sample rows. Column names and
+    types are enough to make a newly connected system useful immediately, while
+    a data owner can later add richer metrics and join definitions where their
+    business meaning matters.
+    """
+    views: list[ViewDoc] = []
+    for item in discovered:
+        name = item.get("name")
+        columns = item.get("columns")
+        if not isinstance(name, str) or not isinstance(columns, list):
+            continue
+
+        documented_columns = tuple(
+            ColumnDoc(
+                name=str(column["name"]),
+                description=f"Source data type: {column.get('type', 'unknown')}.",
+            )
+            for column in columns
+            if isinstance(column, dict) and isinstance(column.get("name"), str)
+        )
+        if documented_columns:
+            views.append(
+                ViewDoc(
+                    name=name,
+                    description=f"Approved read-only view from {connector_name}.",
+                    columns=documented_columns,
+                )
+            )
+
+    notes = [
+        "Use only the approved views listed above. Do not guess at base tables or columns.",
+        "This schema was discovered from metadata only; it contains no sampled business rows.",
+    ]
+    # A repository assistant's response is never used directly.  This is only
+    # reached for an administrator-reviewed, activated training record, and we
+    # project a few bounded factual fields rather than injecting its JSON blob.
+    notes.extend(_reviewed_training_notes(reviewed_training))
+    return SemanticLayer(
+        views=tuple(views),
+        notes=tuple(notes),
+        iot_metric_templates=_reviewed_iot_templates(reviewed_training, views),
+    )
+
+
+def _reviewed_training_notes(profile: dict[str, Any] | None) -> list[str]:
+    """Project reviewed domain facts without treating repository text as instructions."""
+    if not isinstance(profile, dict):
+        return []
+    notes: list[str] = []
+    summary = profile.get("system_summary")
+    if isinstance(summary, str) and summary.strip():
+        notes.append(f"Administrator-reviewed system context: {_bounded_text(summary, 600)}")
+    terms = profile.get("business_terms")
+    if isinstance(terms, list):
+        for term in terms[:20]:
+            if not isinstance(term, dict):
+                continue
+            name, definition = term.get("term"), term.get("definition")
+            if (
+                isinstance(name, str)
+                and isinstance(definition, str)
+                and name.strip()
+                and definition.strip()
+            ):
+                synonyms = term.get("synonyms")
+                synonym_text = ""
+                if isinstance(synonyms, list):
+                    safe_synonyms = [
+                        _bounded_text(value, 60)
+                        for value in synonyms[:10]
+                        if isinstance(value, str) and value.strip()
+                    ]
+                    if safe_synonyms:
+                        synonym_text = f" (synonyms: {', '.join(safe_synonyms)})"
+                notes.append(
+                    "Administrator-reviewed term: "
+                    f"{_bounded_text(name, 80)}{synonym_text} = "
+                    f"{_bounded_text(definition, 240)}"
+                )
+    metrics = profile.get("metrics")
+    if isinstance(metrics, list):
+        for metric in metrics[:20]:
+            if not isinstance(metric, dict):
+                continue
+            name, definition = metric.get("name"), metric.get("definition")
+            if (
+                isinstance(name, str)
+                and isinstance(definition, str)
+                and name.strip()
+                and definition.strip()
+            ):
+                calculation_note = metric.get("calculation_note")
+                calculation_text = (
+                    f" Calculation: {_bounded_text(calculation_note, 240)}"
+                    if isinstance(calculation_note, str) and calculation_note.strip()
+                    else ""
+                )
+                notes.append(
+                    "Administrator-reviewed metric: "
+                    f"{_bounded_text(name, 80)} = {_bounded_text(definition, 240)}"
+                    f"{calculation_text}"
+                )
+    return notes
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    """Keep prompt context compact and visibly data-like, even after review."""
+    return " ".join(value.replace("`", "'").split())[:limit]
+
+
+def _reviewed_iot_templates(
+    profile: dict[str, Any] | None, views: list[ViewDoc]
+) -> tuple[IoTMetricTemplate, ...]:
+    """Turn an explicit reviewed term into a safe, deterministic IoT mapping.
+
+    Nothing is inferred from database rows. The device and metric must both be
+    named in the admin-reviewed profile, and the views must have been discovered
+    through the connector's own curated reader role.
+    """
+    if not isinstance(profile, dict):
+        return ()
+    devices_view = next(
+        (view.name for view in views if view.name.endswith(".v_devices")),
+        None,
+    )
+    metrics_view = next(
+        (view.name for view in views if view.name.endswith(".v_device_metrics")),
+        None,
+    )
+    if not devices_view or not metrics_view:
+        return ()
+    metrics = {
+        str(item.get("name")).lower(): str(item.get("name"))
+        for item in profile.get("metrics", [])
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    templates: list[IoTMetricTemplate] = []
+    for term in profile.get("business_terms", []):
+        if not isinstance(term, dict):
+            continue
+        name, definition = term.get("term"), term.get("definition")
+        if not isinstance(name, str) or not isinstance(definition, str):
+            continue
+        device_match = re.search(r"device named\s+([^\.]+)", definition, re.IGNORECASE)
+        if not device_match:
+            continue
+        metric = next(
+            (
+                value
+                for key, value in metrics.items()
+                if re.search(rf"\b{re.escape(key)}\b", definition, re.IGNORECASE)
+            ),
+            None,
+        )
+        if metric is None:
+            continue
+        synonyms = term.get("synonyms")
+        aliases = [name]
+        if isinstance(synonyms, list):
+            aliases.extend(value for value in synonyms if isinstance(value, str))
+        templates.append(
+            IoTMetricTemplate(
+                aliases=tuple(alias.lower().strip() for alias in aliases if alias.strip()),
+                device_name=device_match.group(1).strip(),
+                metric=metric,
+                devices_view=devices_view,
+                metrics_view=metrics_view,
+            )
+        )
+    return tuple(templates)
 
 
 # The semantic layer for the demo analytics warehouse.
