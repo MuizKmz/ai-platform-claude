@@ -145,7 +145,13 @@ _DATA_SHAPE = re.compile(
     r"\b(how many|count|total|average|mean|median|sum|min(?:imum)?|max(?:imum)?|"
     r"peak|highest|lowest|smallest|largest|biggest|range|current(?:ly)?|latest|"
     r"offline|online|alert(?:s)?|metric(?:s)?|device(?:s)?|reading(?:s)?|"
-    r"schedule|production|oee|downtime|output|status)\b",
+    r"schedule|production|oee|downtime|output|status|"
+    # The measurements themselves. Their absence was invisible while every
+    # test question also said "average" or "maximum": "what is its temperature
+    # right now" matched nothing here, reached no tool, and answered "I don't
+    # have enough information" about a device named one turn earlier.
+    r"temperature|humidity|voltage|pressure|energy|co2|"
+    r"hot|cold|warm|humid)\b",
     re.IGNORECASE,
 )
 
@@ -545,7 +551,15 @@ def _answer_from_one_database(
 # the second is the more common phrasing in practice, and treating it as if it
 # named nothing pushed "what is the maximum" past the device-context injection
 # below and, before _DATA_SHAPE learned "maximum", off the agent path entirely.
-_FOLLOW_UP_REFERENCE = re.compile(r"\b(?:that|this)\s+(?:device|one)\b|\bit\b", re.IGNORECASE)
+# `its` is the one that mattered in practice. "What's its temperature right
+# now?" is the most natural possible follow-up, and \bit\b does not match it —
+# the word boundary falls after "its", not inside it. The question then carried
+# no device, routed to no tool, and answered "I don't have enough information"
+# one turn after naming the device.
+_FOLLOW_UP_REFERENCE = re.compile(
+    r"\b(?:that|this)\s+(?:device|one|unit|machine)\b|\bits\b|\bit\b|\bthere\b",
+    re.IGNORECASE,
+)
 _FOLLOW_UP_NO_SUBJECT = re.compile(
     r"^(?:what(?:'s| is)|and|how about|what about)\b.*\b"
     r"(?:min(?:imum)?|max(?:imum)?|average|mean|median|peak|highest|lowest|"
@@ -570,6 +584,10 @@ def _question_with_context(question: str, context: str | None) -> str:
 
 _TOOL_RESULT_ROWS = re.compile(r"Columns:\s*(?P<columns>[^\n]+)\n(?P<values>[^\n]+)")
 
+# The tool result opens with "SQL: ..." and a "Columns: ..." line before any
+# data. Counting rows means discounting those two.
+_HEADER_LINES = 2
+
 
 def _summarize_direct_database_result(question: str, content: str, error: str | None) -> str:
     """Give a readable deterministic summary without another expensive model call.
@@ -587,6 +605,15 @@ def _summarize_direct_database_result(question: str, content: str, error: str | 
     values = [value.strip() for value in match.group("values").split("|")]
     if len(columns) != len(values) or not values:
         return "Live IoT data was retrieved. Review the executed SQL and returned values below."
+
+    # Several rows is a list, and describing only the first one states a
+    # fraction of the answer as though it were all of it — "Device-001" when
+    # five devices are offline. Say how many there are and let the card list
+    # them; this text is what the run record and the trace keep.
+    data_lines = [line for line in content.splitlines() if line.strip()]
+    row_count = max(len(data_lines) - _HEADER_LINES, 1)
+    if row_count > 1:
+        return f"Live IoT data returned {row_count} rows. Review the results and SQL below."
     pairs = ", ".join(
         f"{column}: {_format_database_value(value)}"
         for column, value in zip(columns, values, strict=True)

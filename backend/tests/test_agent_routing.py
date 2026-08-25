@@ -78,3 +78,36 @@ def test_unrelated_question_does_not_inherit_stale_device_context() -> None:
 
 def test_no_context_leaves_question_unchanged() -> None:
     assert _question_with_context("what is the maximum", None) == "what is the maximum"
+
+
+def test_its_is_a_follow_up_reference() -> None:
+    """The most natural follow-up there is, and it did not match.
+
+    `\bit\b` does not match "its" — the word boundary falls after the s. So
+    "What's its temperature right now?" carried no device, reached no tool, and
+    answered "I don't have enough information" one turn after the device was
+    named on screen.
+    """
+    context = "SERVER ROOM UNIT (device ID Device-005)"
+
+    for question in (
+        "What's its temperature right now?",
+        "whats its tempertaure right now?",
+        "What is its humidity?",
+        "How hot is it in there?",
+    ):
+        combined = _question_with_context(question, context)
+        assert "Device-005" in combined, f"no device context attached to {question!r}"
+
+
+def test_a_bare_measurement_question_reaches_the_database() -> None:
+    """ "What is its temperature right now" named no aggregate, so nothing in
+    _DATA_SHAPE matched and the question never reached a tool. The metric names
+    themselves are what a person actually says."""
+    for question in (
+        "What's its temperature right now?",
+        "What is the humidity in the server room?",
+        "How hot is the office?",
+        "What is the voltage on that device?",
+    ):
+        assert needs_agent(question), f"{question!r} would not reach a database tool"

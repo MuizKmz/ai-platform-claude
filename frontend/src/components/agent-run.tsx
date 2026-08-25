@@ -127,14 +127,54 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
   );
 }
 
-function directResultSummary(response: AgentResponse): { label: string; value: string; detail: string } | null {
+interface DirectResult {
+  label: string;
+  value: string;
+  detail: string;
+  rows?: string[];
+}
+
+/** Every data line the tool returned, not only the first. */
+function parseRows(content: string): { columns: string[]; rows: string[][] } | null {
+  const match = /Columns:\s*([^\n]+)\n([\s\S]*)$/.exec(content);
+  if (!match) return null;
+  const columns = match[1].split("|").map((value) => value.trim());
+  const rows = match[2]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split("|").map((cell) => cell.trim()))
+    .filter((cells) => cells.length === columns.length);
+  return rows.length ? { columns, rows } : null;
+}
+
+function directResultSummary(response: AgentResponse): DirectResult | null {
   if (!response.routed_directly || response.tool_calls.length !== 1) return null;
   const call = response.tool_calls[0];
   if (call.error) return null;
-  const match = /Columns:\s*([^\n]+)\n([^\n]+)/.exec(call.content);
-  if (!match) return null;
-  const columns = match[1].split("|").map((value) => value.trim());
-  const values = match[2].split("|").map((value) => value.trim());
+  const parsed = parseRows(call.content);
+  if (!parsed) return null;
+  const { columns, rows } = parsed;
+  const values = rows[0];
+
+  // Several rows is a LIST, and rendering only the first as a hero number is
+  // how "which ones are offline?" answered "Device-001" when five were down.
+  // A wrong answer that looks like a confident one.
+  if (rows.length > 1) {
+    const nameIndex = columns.indexOf("device_name");
+    const labelIndex = nameIndex >= 0 ? nameIndex : 0;
+    return {
+      label: columns[labelIndex].replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      value: String(rows.length),
+      detail: `${rows.length} results · Live IoT data`,
+      rows: rows.map((row) => {
+        const primary = row[labelIndex];
+        const extras = row.filter((_, i) => i !== labelIndex).join(" · ");
+        return extras ? `${primary} — ${extras}` : primary;
+      }),
+    };
+  }
+
   if (columns.length !== values.length || values.length === 0) return null;
   const firstColumn = columns[0].replaceAll("_", " ");
   const firstValue = values[0];
@@ -167,12 +207,22 @@ function temperatureWindow(question: string): string {
   return "all available readings";
 }
 
-function DirectResultCard({ result }: { result: { label: string; value: string; detail: string } }) {
+function DirectResultCard({ result }: { result: DirectResult }) {
   return (
     <div className="border-primary/25 bg-card/70 rounded-xl border px-4 py-3.5">
       <p className="text-muted-foreground text-xs">{result.label}</p>
-      <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">{result.value}</p>
-      <p className="text-muted-foreground mt-1 text-xs">{result.detail}</p>
+      {result.rows ? (
+        <ul className="mt-1.5 space-y-1">
+          {result.rows.slice(0, 25).map((row, i) => (
+            <li key={i} className="text-sm leading-relaxed">
+              {row}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">{result.value}</p>
+      )}
+      <p className="text-muted-foreground mt-1.5 text-xs">{result.detail}</p>
     </div>
   );
 }
