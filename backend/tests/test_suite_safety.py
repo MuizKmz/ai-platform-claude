@@ -49,7 +49,12 @@ _MAY_DROP_A_SCRATCH_DATABASE = frozenset({"test_restore.py"})
 
 # Databases a test is permitted to drop. Anything else is a bug, and naming
 # them makes "DROP DATABASE eaip" impossible to add by accident.
-_DROPPABLE_DATABASES = frozenset({"eaip_restore_test"})
+#
+# keycloak_restore_test joined when the restore suite grew to cover the identity
+# database (ADR 0009). Note what is NOT here: "keycloak" itself. Dropping that
+# destroys every account, and it must stay as hard to write by accident as
+# "DROP DATABASE eaip".
+_DROPPABLE_DATABASES = frozenset({"eaip_restore_test", "keycloak_restore_test"})
 
 
 def _test_files() -> list[Path]:
@@ -120,8 +125,12 @@ def test_the_drop_exemption_is_narrow() -> None:
     though that file is exempt from the broad rule.
     """
     droppable = "|".join(re.escape(name) for name in _DROPPABLE_DATABASES)
+    # The f-string placeholders resolve to the constants above, so they are
+    # permitted by name. Each must appear here explicitly: a bare `{ANY_NAME}`
+    # wildcard would let a variable holding "keycloak" through.
+    placeholders = r"\{SCRATCH_DB\}|\{KEYCLOAK_SCRATCH_DB\}"
     permitted = re.compile(
-        r"DROP\s+DATABASE\s+(IF\s+EXISTS\s+)?(\{SCRATCH_DB\}|" + droppable + r")",
+        r"DROP\s+DATABASE\s+(IF\s+EXISTS\s+)?(" + placeholders + "|" + droppable + r")",
         re.IGNORECASE,
     )
     offenders: list[str] = []

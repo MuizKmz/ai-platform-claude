@@ -19,6 +19,7 @@ machine without Docker does not fail for the wrong reason.
 from __future__ import annotations
 
 import contextlib
+import os
 import shutil
 import subprocess
 import uuid
@@ -32,6 +33,14 @@ from app.core.config import settings
 
 CONTAINER = "eaip-postgres"
 SCRATCH_DB = "eaip_restore_test"
+
+# Keycloak's database (Phase 11, ADR 0009). Separate container, separate role,
+# separate backup obligation — it knows nothing about POSTGRES_USER.
+KEYCLOAK_CONTAINER = "eaip-keycloak-db"
+KEYCLOAK_SCRATCH_DB = "keycloak_restore_test"
+# Matches the docker-compose default. Not a secret: it is the development
+# password published in the compose file, and a deployment sets its own.
+KEYCLOAK_DB_PASSWORD = os.environ.get("KEYCLOAK_DB_PASSWORD") or "keycloak-dev-password"
 
 
 def _docker_available() -> bool:
@@ -302,3 +311,193 @@ def test_dumps_are_not_committed() -> None:
 
     assert gitignore.is_file(), "infra/backup/.gitignore is missing"
     assert "dumps/" in gitignore.read_text(encoding="utf-8")
+
+
+# --- the identity database (Phase 11, ADR 0009) -------------------------------
+#
+# Restoring EAIP alone recovers a platform nobody can log into: every document
+# survives and every account is gone. Keycloak arrived in Phase 11 and the
+# backup covered one database until this was written.
+
+
+def _keycloak_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    try:
+        result = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "docker",
+                "ps",
+                "--filter",
+                f"name={KEYCLOAK_CONTAINER}",
+                "--format",
+                "{{.Names}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return KEYCLOAK_CONTAINER in result.stdout
+
+
+needs_keycloak = pytest.mark.skipif(
+    not _keycloak_available(), reason=f"{KEYCLOAK_CONTAINER} is not running"
+)
+
+
+def _keycloak_psql(database: str, sql: str) -> str:
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "docker",
+            "exec",
+            "-e",
+            f"PGPASSWORD={KEYCLOAK_DB_PASSWORD}",
+            KEYCLOAK_CONTAINER,
+            "psql",
+            "-U",
+            "keycloak",
+            "-d",
+            database,
+            "-tAc",
+            sql,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"psql failed: {result.stderr.strip()[:300]}")
+    return result.stdout.strip()
+
+
+@pytest.fixture
+def scratch_keycloak_database() -> Iterator[str]:
+    """Keycloak's database, dumped and restored into a scratch copy."""
+    dump_path = f"/tmp/{KEYCLOAK_SCRATCH_DB}-{uuid.uuid4().hex[:8]}.dump"  # noqa: S108
+
+    try:
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "docker",
+                "exec",
+                "-e",
+                f"PGPASSWORD={KEYCLOAK_DB_PASSWORD}",
+                KEYCLOAK_CONTAINER,
+                "pg_dump",
+                "-U",
+                "keycloak",
+                "-d",
+                "keycloak",
+                "-Fc",
+                "--no-owner",
+                "--no-privileges",
+                "-f",
+                dump_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=True,
+        )
+
+        _keycloak_psql("postgres", f"DROP DATABASE IF EXISTS {KEYCLOAK_SCRATCH_DB}")
+        _keycloak_psql("postgres", f"CREATE DATABASE {KEYCLOAK_SCRATCH_DB}")
+
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "docker",
+                "exec",
+                "-e",
+                f"PGPASSWORD={KEYCLOAK_DB_PASSWORD}",
+                KEYCLOAK_CONTAINER,
+                "pg_restore",
+                "-U",
+                "keycloak",
+                "-d",
+                KEYCLOAK_SCRATCH_DB,
+                "--no-owner",
+                "--no-privileges",
+                dump_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            # pg_restore exits non-zero on warnings as well as errors. The
+            # assertions below are the verdict, not the exit code.
+            check=False,
+        )
+
+        yield KEYCLOAK_SCRATCH_DB
+    finally:
+        with contextlib.suppress(Exception):
+            _keycloak_psql("postgres", f"DROP DATABASE IF EXISTS {KEYCLOAK_SCRATCH_DB}")
+        with contextlib.suppress(Exception):
+            subprocess.run(  # noqa: S603
+                ["docker", "exec", KEYCLOAK_CONTAINER, "rm", "-f", dump_path],  # noqa: S607
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+
+
+@needs_keycloak
+def test_a_restored_realm_still_has_its_users(scratch_keycloak_database: str) -> None:
+    """Accounts, not just schema.
+
+    A restore that recreated 90-odd empty Keycloak tables would satisfy any
+    check that only asked whether the restore finished. What matters is whether
+    anybody can still sign in afterwards.
+    """
+    realms = int(_keycloak_psql(scratch_keycloak_database, "SELECT count(*) FROM realm"))
+    users = int(_keycloak_psql(scratch_keycloak_database, "SELECT count(*) FROM user_entity"))
+
+    assert realms >= 1, "no realms survived the restore"
+    assert users >= 1, "the realm restored with no users — nobody could sign in"
+
+
+@needs_keycloak
+def test_restored_users_keep_the_claims_the_api_requires(
+    scratch_keycloak_database: str,
+) -> None:
+    """A user without tenant_id authenticates and is then refused.
+
+    `principal_from_token` refuses a token missing tenancy rather than
+    defaulting it (invariant #1), so an attribute lost in a restore does not
+    degrade access — it removes it, at the API rather than at the login page,
+    which is a confusing place to debug from.
+    """
+    with_tenant = int(
+        _keycloak_psql(
+            scratch_keycloak_database,
+            "SELECT count(*) FROM user_attribute WHERE name = 'tenant_id'",
+        )
+    )
+    credentials = int(_keycloak_psql(scratch_keycloak_database, "SELECT count(*) FROM credential"))
+
+    assert credentials >= 1, "no credentials survived — every password was lost"
+    assert with_tenant >= 1, (
+        "no restored user carries tenant_id; every login would be refused by the API"
+    )
+
+
+def test_the_backup_script_covers_the_identity_database() -> None:
+    """Static check, so it fails in CI rather than during a recovery.
+
+    The script covered EAIP's database only for the whole of Phase 11's first
+    day. Nothing failed; there was simply no backup of the accounts, which is
+    the kind of gap that stays invisible until it is expensive.
+    """
+    backup_dir = Path(__file__).resolve().parents[2].parent / "infra" / "backup"
+    script = (backup_dir / "backup.ps1").read_text(encoding="utf-8-sig")
+
+    assert KEYCLOAK_CONTAINER in script, (
+        "backup.ps1 does not mention the Keycloak database. A restore from it "
+        "recovers the documents and none of the accounts."
+    )
+    # An explicit opt-out is fine; silently skipping is not. The script must
+    # refuse rather than produce a half-backup nobody notices.
+    assert "SkipKeycloak" in script, "backup.ps1 needs a deliberate way to opt out"

@@ -21,17 +21,33 @@
     Target database name. Required, and deliberately not defaulted: naming the
     target is how you notice you are about to overwrite the live one.
 
+.PARAMETER Container
+    Which Postgres container. Defaults to eaip-postgres; pass eaip-keycloak-db
+    to restore the identity database.
+
+.PARAMETER User
+    The role to connect and restore as. Defaults to POSTGRES_USER from .env,
+    which is right for EAIP's database and wrong for Keycloak's — that one
+    wants -User keycloak.
+
 .PARAMETER Force
     Drop the target database first if it exists. Destructive.
 
 .EXAMPLE
     .\restore.ps1 -DumpFile dumps\eaip-20260820-120000.dump -Database eaip_restored
+
+.EXAMPLE
+    # The identity database. Restoring EAIP without this recovers a platform
+    # nobody can log into.
+    .\restore.ps1 -DumpFile dumps\keycloak-20260825-120000.dump `
+        -Database keycloak_restored -Container eaip-keycloak-db -User keycloak
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$DumpFile,
     [Parameter(Mandatory = $true)][string]$Database,
     [string]$Container = "eaip-postgres",
+    [string]$User = "",
     [switch]$Force
 )
 
@@ -51,8 +67,23 @@ foreach ($line in Get-Content $envFile) {
     }
 }
 
-$dbUser = $settings["POSTGRES_USER"]
-$dbPass = $settings["POSTGRES_PASSWORD"]
+# Which database is being restored decides which credentials apply. Keycloak's
+# container has its own role and password and knows nothing about POSTGRES_USER.
+if ($User) {
+    $dbUser = $User
+}
+else {
+    $dbUser = $settings["POSTGRES_USER"]
+}
+
+if ($dbUser -eq "keycloak") {
+    $dbPass = $settings["KEYCLOAK_DB_PASSWORD"]
+    if (-not $dbPass) { $dbPass = "keycloak-dev-password" }
+}
+else {
+    $dbPass = $settings["POSTGRES_PASSWORD"]
+}
+
 $liveDb = $settings["POSTGRES_DB"]
 
 if (-not (Test-Path $DumpFile)) {
@@ -65,10 +96,15 @@ if ($running -ne $Container) {
     throw "Container '$Container' is not running."
 }
 
-# Refuse to overwrite the live database without -Force. The parameter is
+# Refuse to overwrite a live database without -Force. The parameter is
 # mandatory precisely so this check has something to compare against.
-if ($Database -eq $liveDb -and -not $Force) {
-    throw "'$Database' is the LIVE database. Restore somewhere else, or pass -Force if you mean it."
+#
+# "keycloak" is named alongside POSTGRES_DB because it is equally live and does
+# not appear in .env — overwriting it drops every account, which is a worse
+# outcome than overwriting the documents and is the easier mistake to make.
+$liveNames = @($liveDb, "keycloak") | Where-Object { $_ }
+if ($liveNames -contains $Database -and -not $Force) {
+    throw "'$Database' is a LIVE database. Restore somewhere else, or pass -Force if you mean it."
 }
 
 $exists = cmd /c "docker exec -e PGPASSWORD=$dbPass $Container psql -U $dbUser -d postgres -tAc ""SELECT 1 FROM pg_database WHERE datname='$Database'"""
@@ -92,7 +128,13 @@ if ($LASTEXITCODE -ne 0) { throw "Could not create '$Database'." }
 # pgvector must exist BEFORE the restore: the dump contains vector columns, and
 # restoring them into a database without the extension fails partway through
 # with an error that reads like a corrupt dump rather than a missing extension.
-cmd /c "docker exec -e PGPASSWORD=$dbPass $Container psql -U $dbUser -d $Database -c ""CREATE EXTENSION IF NOT EXISTS vector""" | Out-Null
+#
+# Only for EAIP's database. Keycloak stores no vectors, and its image is plain
+# postgres:17-alpine with no pgvector to install — attempting it there fails
+# for a reason that has nothing to do with the restore.
+if ($dbUser -ne "keycloak") {
+    cmd /c "docker exec -e PGPASSWORD=$dbPass $Container psql -U $dbUser -d $Database -c ""CREATE EXTENSION IF NOT EXISTS vector""" | Out-Null
+}
 
 Write-Host "Restoring $DumpFile into '$Database'..."
 $restoreOutput = cmd /c "docker exec -i -e PGPASSWORD=$dbPass $Container pg_restore -U $dbUser -d $Database --no-owner --no-privileges < ""$DumpFile""" 2>&1
@@ -114,22 +156,52 @@ if ($restoreOutput) {
 # One line, deliberately. A here-string does not survive the quoting through
 # cmd /c, and the first version of this check failed for that reason while the
 # restore itself had worked perfectly.
-$check = "SELECT (SELECT count(*) FROM tenant), (SELECT count(*) FROM document), (SELECT count(*) FROM chunk), (SELECT count(*) FROM chunk WHERE embedding IS NOT NULL)"
-$counts = cmd /c "docker exec -e PGPASSWORD=$dbPass $Container psql -U $dbUser -d $Database -tAc ""$check"""
+if ($dbUser -eq "keycloak") {
+    # Different database, different question. What matters here is whether the
+    # accounts came back — a realm with zero users restores a login page that
+    # nobody can get past, and the realm structure alone is already in git.
+    $check = "SELECT (SELECT count(*) FROM realm), (SELECT count(*) FROM user_entity), (SELECT count(*) FROM credential), (SELECT count(*) FROM user_attribute WHERE name='tenant_id')"
+    $counts = cmd /c "docker exec -e PGPASSWORD=$dbPass $Container psql -U $dbUser -d $Database -tAc ""$check"""
+    if (-not $counts) { throw "The restored database did not answer a query." }
 
-if (-not $counts) { throw "The restored database did not answer a query." }
+    $parts = $counts.Trim() -split '\|'
+    Write-Host ""
+    Write-Host "Restored '$Database':"
+    Write-Host "  realms:      $($parts[0])"
+    Write-Host "  users:       $($parts[1])"
+    Write-Host "  credentials: $($parts[2])"
+    Write-Host "  with tenant: $($parts[3])  <- users EAIP can actually authorize"
 
-$parts = $counts.Trim() -split '\|'
-Write-Host ""
-Write-Host "Restored '$Database':"
-Write-Host "  tenants:   $($parts[0])"
-Write-Host "  documents: $($parts[1])"
-Write-Host "  chunks:    $($parts[2])"
-Write-Host "  embedded:  $($parts[3])  <- not re-embedded; the dump carried these"
+    if ([int]$parts[1] -gt 0 -and [int]$parts[2] -eq 0) {
+        throw "Users restored but NO credentials survived. Nobody could sign in."
+    }
+    if ([int]$parts[1] -gt 0 -and [int]$parts[3] -eq 0) {
+        # The API refuses a token with no tenant claim rather than defaulting,
+        # so these users would authenticate at Keycloak and be rejected here.
+        throw "Users restored but none carry tenant_id. Every login would be refused by the API."
+    }
 
-if ([int]$parts[2] -gt 0 -and [int]$parts[3] -eq 0) {
-    throw "Chunks restored but NO embeddings survived. Retrieval would return nothing."
+    Write-Host ""
+    Write-Host "This is the IDENTITY database. EAIP's own data is a separate dump."
 }
+else {
+    $check = "SELECT (SELECT count(*) FROM tenant), (SELECT count(*) FROM document), (SELECT count(*) FROM chunk), (SELECT count(*) FROM chunk WHERE embedding IS NOT NULL)"
+    $counts = cmd /c "docker exec -e PGPASSWORD=$dbPass $Container psql -U $dbUser -d $Database -tAc ""$check"""
 
-Write-Host ""
-Write-Host "Point the app at it with:  POSTGRES_DB=$Database"
+    if (-not $counts) { throw "The restored database did not answer a query." }
+
+    $parts = $counts.Trim() -split '\|'
+    Write-Host ""
+    Write-Host "Restored '$Database':"
+    Write-Host "  tenants:   $($parts[0])"
+    Write-Host "  documents: $($parts[1])"
+    Write-Host "  chunks:    $($parts[2])"
+    Write-Host "  embedded:  $($parts[3])  <- not re-embedded; the dump carried these"
+
+    if ([int]$parts[2] -gt 0 -and [int]$parts[3] -eq 0) {
+        throw "Chunks restored but NO embeddings survived. Retrieval would return nothing."
+    }
+
+    Write-Host ""
+    Write-Host "Point the app at it with:  POSTGRES_DB=$Database"
+}
