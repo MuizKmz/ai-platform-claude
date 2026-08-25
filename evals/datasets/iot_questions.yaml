@@ -1,0 +1,162 @@
+# NL->SQL accuracy against the real IoT curated views.
+#
+# Unlike sql_questions.yaml, these run against a LIVE production database
+# reached over an SSH tunnel — the same one the pilot uses. That has one
+# consequence worth stating loudly:
+#
+#   THE DATA MOVES. Temperature readings arrive every minute. An expectation
+#   written as an exact average is wrong by tomorrow.
+#
+# So expectations here come in two kinds:
+#
+#   `expected`  — an exact result, for facts that do not drift (how many
+#                 devices exist, how many are online, what the schedule says).
+#
+#   `between`   — [min, max] for a single numeric answer that moves but stays
+#                 in a known band. A server room holding 26-28°C is a fact
+#                 about the room; the third decimal place is not.
+#
+# Questions are phrased the way an operator would actually ask them, not the
+# way a schema would suggest. "Which machines are down?" rather than "SELECT
+# devices WHERE status = 'offline'". If the platform only answers the second
+# phrasing it is a SQL console with extra steps.
+#
+# Ground truth captured 2026-08-25 against 6 devices and 345,551 metric rows.
+
+# --- devices: the simplest thing anyone asks ---------------------------------
+
+- question: How many devices do we have?
+  expected: [[6]]
+  kind: answerable
+
+- question: Which devices are offline?
+  expected_row_count: 5
+  kind: answerable
+
+- question: How many devices are online right now?
+  expected: [[1]]
+  kind: answerable
+
+- question: Is the server room unit online?
+  contains: "online"
+  kind: answerable
+
+- question: What machines are down?
+  expected_row_count: 5
+  kind: answerable
+  note: >-
+    Deliberately says "machines" and "down" rather than "devices" and
+    "offline". An operator does not read the schema before speaking.
+
+- question: When was the smart pole last seen?
+  contains: "2026-08-21"
+  kind: answerable
+
+# --- the metric people actually watch ----------------------------------------
+
+- question: What is the average temperature in the server room over the last 24 hours?
+  between: [24.0, 31.0]
+  kind: answerable
+  note: >-
+    The reviewed training profile maps "server room condition" to the
+    temperature metric on SERVER ROOM UNIT. Measured 27.11 on 2026-08-25 with
+    1440 readings; the band allows for seasonal drift without allowing a wrong
+    device or a wrong metric.
+
+- question: What was the server room condition in the last 24 hours?
+  between: [24.0, 31.0]
+  kind: answerable
+  note: >-
+    Same question in the customer's own vocabulary. This is what Training
+    exists for — if this fails while the one above passes, the reviewed
+    profile is not reaching the model.
+
+- question: What is the highest temperature recorded in the server room in the last 24 hours?
+  between: [24.0, 32.0]
+  kind: answerable
+
+- question: What is the lowest temperature in the server room in the last 24 hours?
+  between: [23.0, 30.0]
+  kind: answerable
+
+- question: How hot is the office right now?
+  between: [15.0, 35.0]
+  kind: answerable
+  note: OFFICE MONITORING UNIT averages 26.85 across its history.
+
+- question: What metrics do we collect?
+  expected_row_count_at_least: 8
+  kind: answerable
+  note: Twelve metric types exist. Any sensible answer lists most of them.
+
+# --- alerts -------------------------------------------------------------------
+
+- question: Are there any active alerts?
+  expected_row_count_at_least: 1
+  kind: answerable
+
+- question: How many critical alerts are there?
+  expected: [[5]]
+  kind: answerable
+
+- question: Which devices have alerts against them?
+  expected_row_count: 5
+  kind: answerable
+
+# --- production ---------------------------------------------------------------
+
+- question: How many production shifts are scheduled?
+  expected: [[7]]
+  kind: answerable
+
+- question: What is the target output for the assembly process?
+  expected_row_count_at_least: 1
+  kind: answerable
+
+- question: What processes do we run?
+  expected_row_count_at_least: 2
+  kind: answerable
+  note: Assembly Process and Cold Process.
+
+# --- the honest failures ------------------------------------------------------
+#
+# A system that answers everything is not being honest. These must produce a
+# refusal, not a plausible number. A confident wrong answer is the worst
+# output this platform can produce, because nobody checks a number that looks
+# fine.
+
+- question: What is our OEE for last week?
+  kind: unanswerable
+  note: >-
+    THE MOST IMPORTANT QUESTION IN THIS FILE. oee_device_config is populated
+    for 97 devices, so the platform looks like it should answer — but
+    total_count and reject_count have 92 rows between them and stopped on
+    2026-06-19. There is no recent data to compute OEE from. Answering with a
+    number derived from June data, presented as "last week", would be a
+    confident lie about a headline manufacturing metric.
+
+- question: Which operator was on shift when Machine-001 went down?
+  kind: unanswerable
+  note: No operator or personnel data exists in the curated views.
+
+- question: How much did we spend on electricity last month?
+  kind: unanswerable
+  note: >-
+    An energy METRIC exists, which makes this feel answerable. There is no
+    tariff, no cost, and no billing data anywhere in these views.
+
+- question: What is the maintenance schedule for the smart pole?
+  kind: unanswerable
+  note: Production schedule exists; maintenance schedule does not.
+
+- question: Who acknowledged the critical alert on Machine-002?
+  kind: unanswerable
+  note: >-
+    v_active_alerts carries no acknowledgement, owner, or audit column. The
+    alert is visible; who touched it is not.
+
+- question: What will the server room temperature be tomorrow?
+  kind: unanswerable
+  note: >-
+    Prediction, not retrieval. The platform reports what was measured; a
+    forecast would be invention presented in the same voice as a fact.
