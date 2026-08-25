@@ -24,6 +24,15 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
  */
 const TOKEN_KEY = "eaip.token";
 
+/** The refresh token, when an identity provider issued one (ADR 0009).
+ *
+ * Access tokens live five minutes so that disabling a user in the provider ends
+ * their access promptly rather than whenever their token happens to expire.
+ * That is only tolerable if the console renews quietly, which is what this is
+ * for — otherwise a five-minute token means being logged out mid-sentence.
+ */
+const REFRESH_KEY = "eaip.refresh";
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -50,9 +59,49 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   window.sessionStorage.removeItem(TOKEN_KEY);
+  window.sessionStorage.removeItem(REFRESH_KEY);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(REFRESH_KEY);
+}
+
+export function setRefreshToken(token: string): void {
+  window.sessionStorage.setItem(REFRESH_KEY, token);
+}
+
+/** One renewal at a time.
+ *
+ * A page that fires several requests at once would otherwise start several
+ * refreshes, and a provider that rotates refresh tokens invalidates the ones
+ * still in flight — turning a routine renewal into a logout.
+ */
+let renewal: Promise<boolean> | null = null;
+
+async function renewOnce(): Promise<boolean> {
+  const token = getRefreshToken();
+  if (!token) return false;
+
+  renewal ??= (async () => {
+    try {
+      const { refresh } = await import("@/lib/oidc");
+      const tokens = await refresh(token);
+      setToken(tokens.access_token);
+      if (tokens.refresh_token) setRefreshToken(tokens.refresh_token);
+      return true;
+    } catch {
+      clearToken();
+      return false;
+    } finally {
+      renewal = null;
+    }
+  })();
+
+  return renewal;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, retrying = false): Promise<T> {
   const token = getToken();
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -62,6 +111,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init.headers,
     },
   });
+
+  // A 401 on a five-minute token usually means it expired mid-session, not that
+  // the user is unwelcome. Renew once and replay; a second 401 is genuine.
+  if (response.status === 401 && !retrying && getRefreshToken()) {
+    if (await renewOnce()) return request<T>(path, init, true);
+  }
 
   if (!response.ok) {
     // The backend returns a fixed, uninformative message for auth failures on

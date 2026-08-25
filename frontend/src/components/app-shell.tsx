@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ApiError, type Principal, api, clearToken, getToken } from "@/lib/api";
+import { logoutUrl, oidcConfigured } from "@/lib/oidc";
 
 /**
  * The frame around every authenticated page.
@@ -74,6 +75,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   function signOut() {
     clearToken();
+    // With a provider, end the session THERE too. Clearing this tab alone
+    // leaves the provider's session cookie intact, so the next sign-in skips
+    // the password prompt — which looks like the logout failed, and on a
+    // shared machine means it did.
+    if (oidcConfigured()) {
+      window.location.assign(logoutUrl());
+      return;
+    }
     router.replace("/login");
   }
 

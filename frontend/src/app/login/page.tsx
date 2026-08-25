@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api, clearToken, setToken } from "@/lib/api";
+import { beginLogin, oidcConfigured } from "@/lib/oidc";
 
 /**
  * Sign in by pasting a token.
@@ -29,6 +30,21 @@ export default function LoginPage() {
   const [token, setTokenValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  // A build-time constant, so it can be read during render. It is deliberately
+  // NOT resolved in an effect: the paste-a-token form must never appear, even
+  // for one frame, on a deployment that has a real identity provider.
+  const provider = oidcConfigured();
+
+  async function signInWithProvider() {
+    setChecking(true);
+    setError(null);
+    try {
+      await beginLogin("/agent");
+    } catch (e) {
+      setChecking(false);
+      setError(e instanceof Error ? e.message : "Could not reach the identity provider.");
+    }
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -94,16 +110,32 @@ export default function LoginPage() {
                 <KeyRound className="size-4" strokeWidth={2.25} />
               </span>
               <div>
-                <p className="text-xs font-medium tracking-wide uppercase">Development console</p>
+                <p className="text-xs font-medium tracking-wide uppercase">
+                  {provider ? "Secure sign-in" : "Development console"}
+                </p>
                 <h2 className="text-xl font-semibold tracking-tight">Sign in to EAIP</h2>
               </div>
             </div>
             <p className="text-muted-foreground text-sm leading-relaxed">
-              Paste the access token issued for your EAIP user. It determines the
-              data and tools available to you.
+              {provider
+                ? "You will be taken to your organisation's sign-in page. Your permissions travel with you."
+                : "Paste the access token issued for your EAIP user. It determines the data and tools available to you."}
             </p>
           </div>
 
+          {provider ? (
+            <div className="space-y-5">
+              <Button className="w-full" onClick={signInWithProvider} disabled={checking}>
+                <ArrowRight className="size-4" />
+                {checking ? "Redirecting…" : "Continue to sign in"}
+              </Button>
+              {error ? (
+                <p role="alert" className="text-destructive text-xs">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          ) : (
           <form onSubmit={submit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="token" className="text-sm font-medium">
@@ -148,12 +180,14 @@ export default function LoginPage() {
               {checking ? "Checking…" : "Sign in"}
             </Button>
           </form>
+          )}
 
           <div className="text-muted-foreground/70 mt-6 flex gap-2 border-t pt-4 text-xs leading-relaxed">
             <ShieldCheck className="text-primary mt-0.5 size-4 shrink-0" />
             <p>
-            Tokens expire after 60 minutes and are held in this tab only. Phase 11
-            replaces this with a real identity provider.
+              {provider
+                ? "Your password is checked by the identity provider and never reaches EAIP. Sessions are held in this tab only."
+                : "Tokens expire after 60 minutes and are held in this tab only. Configure an identity provider to replace this."}
             </p>
           </div>
         </LiquidGlass>
