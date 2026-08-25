@@ -44,3 +44,22 @@ _FALLBACK = {
 
 for key, value in _FALLBACK.items():
     os.environ.setdefault(key, value)
+
+# The suite mints its own HS256 tokens through `issue_token`, so a developer who
+# has pointed their .env at a real identity provider would otherwise watch 137
+# tests fail on tokens the OIDC path is right to refuse — which reads as "my
+# branch is broken" rather than "my environment changed".
+#
+# Set to empty rather than deleted. Settings reads `env_file=.env` directly, so
+# removing the environment variable just lets the file supply the value again;
+# only an explicit empty string wins, because load_dotenv does not overwrite and
+# pydantic prefers the environment over the file.
+#
+# The tests that DO exercise provider verification set these with monkeypatch,
+# so nothing here reduces their coverage.
+#
+# APP_ENV is forced for the same reason: `issue_token` refuses to run in
+# production, and testing a production-like .env should not cost the suite.
+os.environ["OIDC_JWKS_URL"] = ""
+os.environ["OIDC_ISSUER"] = ""
+os.environ["APP_ENV"] = "test"

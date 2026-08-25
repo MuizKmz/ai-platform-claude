@@ -305,6 +305,28 @@ def test_roles_survive_whichever_shape_the_provider_sends(
     assert principal.roles == expected
 
 
+def test_the_suite_itself_runs_against_the_local_issuer() -> None:
+    """conftest neutralises OIDC so the suite's own HS256 tokens still verify.
+
+    Without it, pointing a .env at a real provider fails 137 tests on tokens the
+    OIDC path is right to refuse — which reads as "my branch is broken" rather
+    than "my environment changed".
+
+    Asserted against the resolved SETTING, not the environment variable.
+    Clearing the variable is not enough: Settings reads `.env` directly, so a
+    deleted variable simply falls back to the file. That distinction was the
+    bug — the first fix cleared os.environ, and the suite failed identically.
+    """
+    from app.core.config import Settings
+
+    fresh = Settings()  # type: ignore[call-arg]
+    assert not fresh.oidc_enabled, (
+        "conftest must neutralise OIDC: the suite mints its own local HS256 tokens, "
+        "and a developer with a provider in .env would see the whole suite fail"
+    )
+    assert fresh.local_tokens_allowed, "issue_token must remain usable in the suite"
+
+
 def test_an_unreadable_provider_is_a_config_error_not_a_401(
     monkeypatch: pytest.MonkeyPatch, keypair: tuple[Any, str]
 ) -> None:
