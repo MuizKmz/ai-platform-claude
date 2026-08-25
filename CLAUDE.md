@@ -53,6 +53,29 @@ vice versa. The token is verified, used to derive a Principal, and dropped — n
 attached to anything outbound. Write tools are excluded by TYPE, not by name, because an
 MCP client has no approval queue.
 
+**Phase 11 in progress — identity is done, the rest is not.** A real identity provider
+(Keycloak, ADR 0009) replaced the CLI token issuer. Tokens are verified with RS256 against
+the provider's published keys, so **this process can check an identity and can no longer
+mint one** — the symmetric key did both, and reading it was enough to forge an admin token
+for any tenant.
+
+The `Principal` did not change and no endpoint, policy, or authorization check was touched.
+Phase 1 shaped the claims for this, and that bet paid.
+
+`issue_token` still exists for the test suite and refuses to run when `APP_ENV=production`
+and a provider is configured. A credential-free issuer left reachable beside a real one
+keeps the weakest path open. `tests/conftest.py` neutralises OIDC for the same reason in
+reverse — the suite mints its own HS256 tokens, and a developer whose `.env` points at
+Keycloak should not watch 137 tests fail.
+
+Keycloak's database is a **separate backup obligation**. A restore that recovers EAIP but
+not Keycloak recovers a platform nobody can log into.
+
+**Still open in Phase 11:** TLS, monitoring and alerting, a rehearsed restore, and a load
+test. All of them wait on a decision this project has not made — where EAIP will actually
+run. It currently runs on a developer's machine and reaches the IoT MariaDB over an SSH
+tunnel. `infra/DEPLOY-aapanel.md` describes a deployment that **has not been performed.**
+
 **MySQL is supported alongside Postgres** (ADR 0008). The ERP, WMS, MES, and IoT systems
 this platform serves all run MySQL, so proving the safety layers against Postgres alone
 proved them for an engine nobody uses. The suite now runs against a real MySQL in CI.
@@ -78,7 +101,7 @@ See [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for what ea
 ## How to run
 
 ```powershell
-docker compose up -d          # Postgres 17 + pgvector, Redis 7, MySQL 8.4
+docker compose up -d          # Postgres 17 + pgvector, Redis 7, MySQL 8.4, Keycloak
 cd backend
 uv sync                       # installs into .venv from uv.lock
 uv run uvicorn app.main:app --reload
@@ -91,9 +114,16 @@ npm run dev                   # http://localhost:3000
 Health check: http://127.0.0.1:8000/health — must report `db: ok` and `redis: ok`.
 
 **Host ports on this machine are deliberately non-default** — Postgres `5433`, Redis `6380`,
-MySQL `3307`. Another project and a native Memurai service hold 5432 and 6379, and 3306 is
-commonly taken by a local MySQL. Container-internal ports are unchanged; only the published
-host port differs. Do not "helpfully" reset these.
+MySQL `3307`, Keycloak `8081`. Another project and a native Memurai service hold 5432 and
+6379, 3306 is commonly taken by a local MySQL, and 8080 is the most contested port on any
+development machine. Container-internal ports are unchanged; only the published host port
+differs. Do not "helpfully" reset these.
+
+**Signing in** depends on whether `OIDC_JWKS_URL` is set. Empty, and the console shows the
+paste-a-token form and `python -m app.cli token` mints one. Set, and the console redirects
+to Keycloak for a real password. See [infra/keycloak/README.md](infra/keycloak/README.md)
+for creating a user — note that a user needs `tenant_id` and `labels` attributes and a
+realm role, and that a user missing `tenant_id` is **refused**, not defaulted.
 
 MySQL takes about 70 seconds to become healthy on a first start, because the entrypoint
 initialises the data directory before running `infra/mysql/init.sql`. `uv run pytest` skips

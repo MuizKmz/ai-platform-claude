@@ -1,8 +1,23 @@
 # Implementation Roadmap — Enterprise AI Integration Platform
 
 **Companion to:** [`ARCHITECTURE_REVIEW.md`](./ARCHITECTURE_REVIEW.md)
-**Date:** 2026-08-19
-**Status:** Plan only. No implementation has been performed.
+**Date:** 2026-08-19 · **Status reviewed:** 2026-08-25
+
+> **This document is the original plan, kept as written.** It is not a progress
+> tracker, and the sequencing arguments below are still the reasoning that
+> matters. But the header used to say *"Plan only. No implementation has been
+> performed,"* which stopped being true a long time ago and misleads anyone
+> assessing where the project stands.
+>
+> **Current state: Phases 0–10 complete. Phase 11 partially done** — identity
+> shipped (ADR 0009); TLS, monitoring, a rehearsed restore, and a load test have
+> not. [`CLAUDE.md`](../CLAUDE.md) is the authority on current state; this file
+> is the authority on *why the order is what it is*.
+>
+> Two things exist that this plan never mentioned, both driven by the IoT pilot:
+> an integration **training/onboarding** flow, and a **fast path** that answers
+> common operational questions without a planning call. Neither was foreseen
+> here, which is what a real pilot is for.
 
 ---
 

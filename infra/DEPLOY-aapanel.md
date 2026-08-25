@@ -1,5 +1,22 @@
 # Deploying to the aaPanel host
 
+> **STATUS: NOT PERFORMED.** This is a plan, not a record. EAIP has never run
+> on that host.
+>
+> What actually exists today: EAIP runs on a **developer's machine** — backend,
+> frontend, Postgres, Redis, and Keycloak in local Docker — and reaches the IoT
+> MariaDB on the Huawei host over an **SSH tunnel**. The remote database is
+> read; the platform is not deployed there.
+>
+> The distinction matters. Read in the present tense this document describes a
+> deployment that does not exist, and decisions get made against it — the port
+> 80/443 conflict below is real *if* you deploy here, and irrelevant until then.
+>
+> It is also **out of date in one respect**: it predates Phase 11. Identity is
+> now Keycloak (ADR 0009), which adds two containers, its own database, its own
+> backup obligation, and a hostname requirement that plain `start-dev` does not
+> satisfy. Steps 4 and 5 do not account for any of that.
+
 The target is the Huawei Cloud VM that already runs the IoT platform, a WMS,
 and around a dozen client databases under aaPanel.
 
@@ -288,10 +305,16 @@ Nothing in that sequence touches an existing site, database, or user.
 
 Being explicit, so nobody over-reads a working demo:
 
-- **It is not multi-user.** Tokens are issued by hand. Real users need an
-  identity provider — Phase 11, and the thing that blocks MES.
+- **It is not multi-user.** ~~Tokens are issued by hand.~~ **Superseded:**
+  identity is now Keycloak (ADR 0009), with real passwords, lockout, and
+  revocation. That unblocks multi-user — but this document has not been updated
+  to deploy it, and Keycloak here would need `start` behind TLS with
+  `KC_HOSTNAME` set, not the `start-dev` the base compose file uses.
 - **It has no TLS.** The SSH tunnel is the encryption. Serving anyone else
-  needs a certificate.
+  needs a certificate — and on this host ports 80 and 443 belong to aaPanel's
+  Nginx, so a Caddy container cannot simply take them. The likely shape is
+  aaPanel's own reverse proxy and Let's Encrypt for a subdomain, forwarding to
+  EAIP's loopback ports. Not designed, not tested.
 - **MES and WMS must not be connected to it.** IoT only, mock data only, until
   identity is real.
 - **It cannot compute OEE.** `oee_device_config` is populated for 97 devices,
