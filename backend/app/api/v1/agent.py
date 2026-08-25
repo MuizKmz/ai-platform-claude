@@ -614,6 +614,16 @@ def _summarize_direct_database_result(question: str, content: str, error: str | 
     row_count = max(len(data_lines) - _HEADER_LINES, 1)
     if row_count > 1:
         return f"Live IoT data returned {row_count} rows. Review the results and SQL below."
+
+    # An aggregate over no matching rows returns NULL, and "None" is not a
+    # measurement. Rendering it as one produced "Max Temperature Last 24h:
+    # None°C", which reads like a reading of None rather than an absence of
+    # readings.
+    if all(_is_null(value) for value in values):
+        return (
+            "No matching data was found for that question — the query ran and "
+            "returned nothing. Review the SQL below to check the device and period."
+        )
     pairs = ", ".join(
         f"{column}: {_format_database_value(value)}"
         for column, value in zip(columns, values, strict=True)
@@ -622,6 +632,11 @@ def _summarize_direct_database_result(question: str, content: str, error: str | 
         " in the last 24 hours" if _TIME_WINDOW.search(question) else " in the requested period"
     )
     return f"Live IoT result{window}: {pairs}."
+
+
+def _is_null(value: str) -> bool:
+    """SQL NULL, as it arrives after str() — not a measurement of any kind."""
+    return value.strip().lower() in {"none", "null", ""}
 
 
 def _format_database_value(value: str) -> str:

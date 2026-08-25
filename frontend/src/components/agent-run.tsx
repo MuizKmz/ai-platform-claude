@@ -178,6 +178,13 @@ function directResultSummary(response: AgentResponse): DirectResult | null {
   if (columns.length !== values.length || values.length === 0) return null;
   const firstColumn = columns[0].replaceAll("_", " ");
   const firstValue = values[0];
+
+  // An aggregate over no rows is NULL, and "None°C" reads as a reading of
+  // None rather than an absence of readings. Fall through to the plain answer
+  // text, which says so in words.
+  if (values.every((value) => ["none", "null", ""].includes(value.toLowerCase()))) {
+    return null;
+  }
   const deviceId = values[columns.indexOf("device_id")];
   const deviceName = values[columns.indexOf("device_name")];
   const status = values[columns.indexOf("status")];

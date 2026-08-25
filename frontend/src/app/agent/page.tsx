@@ -172,10 +172,26 @@ export default function AgentPage() {
 function extractDeviceContext(response: AgentResponse): string | null {
   const content = response.tool_calls.at(-1)?.content;
   if (!content) return null;
-  const match = /Columns:\s*([^\n]+)\n([^\n]+)/.exec(content);
+  const match = /Columns:\s*([^\n]+)\n([\s\S]*)$/.exec(content);
   if (!match) return null;
+
   const columns = match[1].split("|").map((value) => value.trim().toLowerCase());
-  const values = match[2].split("|").map((value) => value.trim());
+  const rows = match[2]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split("|").map((cell) => cell.trim()))
+    .filter((cells) => cells.length === columns.length);
+
+  // A LIST does not tell us which device the user is thinking about, and
+  // guessing costs more than not knowing. Asked "which ones are offline?" this
+  // used to take one row of five and silently make it "the current device" —
+  // so the next question, "what's its temperature", answered confidently about
+  // a device the user had never singled out. A wrong answer with a real number
+  // on it is worse than no context at all.
+  if (rows.length !== 1) return null;
+
+  const [values] = rows;
   const deviceId = values[columns.indexOf("device_id")];
   const deviceName = values[columns.indexOf("device_name")];
   if (!deviceId || !deviceName) return null;

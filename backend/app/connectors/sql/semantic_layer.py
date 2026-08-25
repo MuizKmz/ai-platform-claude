@@ -224,6 +224,15 @@ def from_discovered_schema(
     )
 
 
+_ANNOTATION = " (the device named "
+
+
+def _split_annotated(value: str) -> str:
+    """ "Device-002 (the device named OFFICE …)" -> "'Device-002' is OFFICE …"."""
+    identifier, _, name = value.partition(_ANNOTATION)
+    return f"'{identifier}' is {name.rstrip(')')}"
+
+
 def _describe_column(
     column: dict[str, Any], hints: dict[str, tuple[str, ...]] | None, view: str
 ) -> str:
@@ -235,7 +244,21 @@ def _describe_column(
     """
     description = f"Source data type: {column.get('type', 'unknown')}."
     values = (hints or {}).get(f"{view}.{column.get('name', '')}")
-    if values:
+    if not values:
+        return description
+
+    # An annotated hint carries the id and, in brackets, what it refers to. The
+    # bracket is explanation, not part of the value, and saying so matters: an
+    # earlier format produced `WHERE device_id = 'OFFICE MONITORING UNIT =
+    # Device-002'`, which matched nothing and returned an empty result that
+    # looked like an answer.
+    if any(_ANNOTATION in value for value in values):
+        listed = ", ".join(_split_annotated(value) for value in values)
+        description += (
+            f" Identifiers and what they refer to: {listed}."
+            " Use only the quoted identifier as the value."
+        )
+    else:
         listed = ", ".join(f"'{value}'" for value in values)
         description += f" Values are exactly: {listed}. Match these literally."
     return description
@@ -267,7 +290,44 @@ HINTABLE_COLUMNS = frozenset(
         "product_code",
         "category",
         "unit",
+        # Equipment identity. Without these the model knows a `device_id`
+        # column exists and nothing about what is in it, so "how hot is the
+        # office" either drops the filter — returning some other device's
+        # temperature as the office's — or invents `device_id LIKE '%office%'`
+        # and matches nothing. Both were observed.
+        #
+        # A device is a THING, and its name and asset tag are the vocabulary a
+        # person uses to refer to it. Names of PEOPLE are a different matter
+        # and are excluded below, whatever the column is called.
+        #
+        # Note these two are also PAIRED where they share a view — see
+        # `_pair_identifier_with_name`. Listing them separately told the model
+        # which ids exist and which names exist, and nothing about which goes
+        # with which, so it picked Device-004 for "the office".
+        "device_name",
+        "machine_name",
+        "equipment_name",
+        "asset_tag",
+        "line_name",
+        "station_name",
     }
+)
+
+# Never enumerated, however few there are and whatever else matches. A short
+# customer list is still a list of customers, and a prompt is not the place to
+# discover that. Checked as a substring so `user_email` and `contact_name` are
+# caught along with the bare forms.
+NEVER_HINTED = (
+    "email",
+    "phone",
+    "user",
+    "person",
+    "employee",
+    "customer",
+    "contact",
+    "operator_name",
+    "owner",
+    "address",
 )
 
 
@@ -310,6 +370,11 @@ def discover_value_hints(
             name = column.get("name")
             if not isinstance(name, str) or name.lower() not in HINTABLE_COLUMNS:
                 continue
+            # The denial wins over the allowlist. `operator` is a comparison
+            # symbol in an alerts view and a person in a shift log; when a
+            # column name reads as personal, it is not enumerated.
+            if any(marker in name.lower() for marker in NEVER_HINTED):
+                continue
 
             # Identifiers come from the connector's own metadata discovery.
             # Re-checked anyway: this builds SQL, and a validation that only
@@ -335,7 +400,62 @@ def discover_value_hints(
                 continue
             hints[f"{view}.{name}"] = tuple(sorted(values))
 
+        _pair_identifier_with_name(connector, principal, view, columns, hints, max_values)
+
     return hints
+
+
+def _pair_identifier_with_name(
+    connector: Any,
+    principal: Any,
+    view: str,
+    columns: list[Any],
+    hints: dict[str, tuple[str, ...]],
+    max_values: int,
+) -> None:
+    """Say which id belongs to which name, where a view holds both.
+
+    Listing `device_id` and `device_name` as two independent sets tells the
+    model which identifiers exist and which names exist, and nothing about the
+    correspondence. Asked "how hot is the office" it then chose Device-004 —
+    Machine-002-002 — and returned an empty result with no sign anything was
+    wrong.
+
+    Only for a view that carries both columns, and only when the pairing is
+    small enough to be a vocabulary rather than a data dump.
+    """
+    names = {
+        str(column.get("name")).lower()
+        for column in columns
+        if isinstance(column, dict) and isinstance(column.get("name"), str)
+    }
+    if "device_id" not in names or "device_name" not in names:
+        return
+    if not _SQL_IDENTIFIER.fullmatch(view):
+        return
+
+    sql = (
+        f"SELECT DISTINCT device_id, device_name FROM {view} "  # noqa: S608
+        f"WHERE device_id IS NOT NULL AND device_name IS NOT NULL "
+        f"LIMIT {max_values + 1}"
+    )
+    try:
+        result = connector.query(principal, sql)
+    except Exception:  # noqa: BLE001 - drivers raise many types; a hint is optional
+        logger.debug("no identifier pairing for %s", view, exc_info=True)
+        return
+
+    rows = [(str(row[0]), str(row[1])) for row in result.rows if row and row[0] and row[1]]
+    if not rows or len(rows) > max_values:
+        return
+
+    # The id FIRST and alone-looking, because this string is what the model
+    # copies into a WHERE clause. A "NAME = id" format was tried and produced
+    # `WHERE device_id = 'OFFICE MONITORING UNIT = Device-002'` — it took the
+    # whole hint as the literal. The value has to be unmistakably the value.
+    hints[f"{view}.device_id"] = tuple(
+        sorted(f"{identifier} (the device named {name})" for identifier, name in rows)
+    )
 
 
 def _reviewed_training_notes(profile: dict[str, Any] | None) -> list[str]:

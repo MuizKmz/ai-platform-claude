@@ -50,12 +50,16 @@ def test_value_hints_reach_the_prompt() -> None:
     assert "'online'" in prompt
 
 
-def test_only_enumeration_columns_are_read() -> None:
-    """An allowlist, not a cardinality test.
+def test_things_are_enumerated_and_people_are_not() -> None:
+    """An allowlist, not a cardinality test — and a denylist over the top.
 
-    "Few distinct values" also describes a table of six customers. Enumerating
-    people into a prompt is exactly what this must never do, so the gate is the
-    column NAME — device_name is not on the list however few there are.
+    "Few distinct values" also describes a table of six customers, so the gate
+    is the column NAME rather than how many values it holds.
+
+    Equipment names ARE enumerated, and that was a deliberate change: without
+    them "how hot is the office" cannot know which device the office is, and
+    the model either drops the filter or invents `LIKE '%office%'`. A device is
+    a thing. A person is not, whatever the column is called.
     """
     discovered = [
         {
@@ -64,6 +68,8 @@ def test_only_enumeration_columns_are_read() -> None:
                 {"name": "status", "type": "varchar"},
                 {"name": "device_name", "type": "varchar"},
                 {"name": "email", "type": "varchar"},
+                {"name": "customer_name", "type": "varchar"},
+                {"name": "operator_name", "type": "varchar"},
             ],
         }
     ]
@@ -72,14 +78,68 @@ def test_only_enumeration_columns_are_read() -> None:
             "status": ["online"],
             "device_name": ["SERVER ROOM UNIT"],
             "email": ["alice@acme.test"],
+            "customer_name": ["Acme Ltd"],
+            "operator_name": ["Alice Smith"],
         }
     )
 
     hints = discover_value_hints(connector, object(), discovered)
 
     assert "curated.v_devices.status" in hints
-    assert "curated.v_devices.device_name" not in hints
+    assert "curated.v_devices.device_name" in hints, "equipment identity is a vocabulary"
     assert "curated.v_devices.email" not in hints
+    assert "curated.v_devices.customer_name" not in hints
+    assert "curated.v_devices.operator_name" not in hints, (
+        "operator is on the allowlist as a comparison symbol; operator_NAME is a person"
+    )
+
+
+def test_an_identifier_is_paired_with_the_name_it_refers_to() -> None:
+    """Two separate lists do not say which id goes with which name.
+
+    Given device_ids and device_names as independent sets, the model chose
+    Device-004 for "the office" — Machine-002-002 — and returned an empty
+    result that looked like an answer. The pairing has to be explicit, and the
+    VALUE has to be unmistakable: a "NAME = id" format was tried first and
+    produced `WHERE device_id = 'OFFICE MONITORING UNIT = Device-002'`.
+    """
+    discovered = [
+        {
+            "name": "curated.v_devices",
+            "columns": [
+                {"name": "device_id", "type": "varchar"},
+                {"name": "device_name", "type": "varchar"},
+            ],
+        }
+    ]
+
+    def query(_principal: object, sql: str) -> QueryResult:
+        if "SELECT DISTINCT device_id, device_name" in sql:
+            return QueryResult(
+                ("device_id", "device_name"),
+                (("Device-002", "OFFICE MONITORING UNIT"),),
+                sql,
+                1,
+                False,
+                1.0,
+            )
+        if "SELECT DISTINCT device_name " in sql:
+            return QueryResult(("device_name",), (("OFFICE MONITORING UNIT",),), sql, 1, False, 1.0)
+        return QueryResult((), (), sql, 0, False, 1.0)
+
+    hints = discover_value_hints(SimpleNamespace(query=query), object(), discovered)
+    paired = hints["curated.v_devices.device_id"]
+    assert paired == ("Device-002 (the device named OFFICE MONITORING UNIT)",)
+
+    description = (
+        from_discovered_schema(discovered, connector_name="IoT", value_hints=hints)
+        .views[0]
+        .columns[0]
+        .description
+    )
+
+    assert "'Device-002' is OFFICE MONITORING UNIT" in description
+    assert "Use only the quoted identifier as the value." in description
 
 
 def test_a_column_with_too_many_values_is_dropped_not_truncated() -> None:
