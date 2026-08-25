@@ -26,6 +26,7 @@ decision cannot be introspected out of a database.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 from dataclasses import dataclass, field
@@ -212,16 +213,58 @@ def from_discovered_schema(
     notes = [
         "Use only the approved views listed above. Do not guess at base tables or columns.",
         "This schema was discovered from metadata only; it contains no sampled business rows.",
+        # Each view's columns are listed above, and only those exist in it.
+        # Naming device_name on a view holding only device_id produced SQL that
+        # failed and surfaced to the user as a refusal — the model had seen
+        # device_name hinted on two other views and assumed it was everywhere.
+        "A column exists only in the views that list it. To use a column from "
+        "another view, JOIN using a path from the section below.",
     ]
+    joins = _infer_joins(views)
     # A repository assistant's response is never used directly.  This is only
     # reached for an administrator-reviewed, activated training record, and we
     # project a few bounded factual fields rather than injecting its JSON blob.
     notes.extend(_reviewed_training_notes(reviewed_training))
     return SemanticLayer(
         views=tuple(views),
+        joins=joins,
         notes=tuple(notes),
         iot_metric_templates=_reviewed_iot_templates(reviewed_training, views),
     )
+
+
+# Columns that identify the same thing wherever they appear, so two views
+# sharing one can be joined on it. Deliberately short: this module's own
+# docstring warns that two views both having `order_id` does not prove they
+# should be joined, and inferring a join path is a claim about meaning.
+#
+# These are safe because they name an ENTITY rather than an attribute. A
+# `status` column shared by two views says nothing; a `device_id` shared by two
+# views is the same device in both.
+JOINABLE_KEYS = ("device_id", "asset_id", "machine_id", "equipment_id", "site_id")
+
+
+def _infer_joins(views: list[ViewDoc]) -> tuple[JoinPath, ...]:
+    """Say which views can be joined, for the questions that need two.
+
+    Without this, "which is hotter, the office or the server room?" is
+    unanswerable: the metrics view carries `device_id` and no name, the devices
+    view carries the name, and nothing told the model it may put them together.
+    It refused — correctly, given what it knew.
+    """
+    joins: list[JoinPath] = []
+    for key in JOINABLE_KEYS:
+        holders = [view.name for view in views if any(c.name == key for c in view.columns)]
+        for left, right in itertools.combinations(sorted(holders), 2):
+            joins.append(
+                JoinPath(
+                    left=left,
+                    right=right,
+                    on=f"{left}.{key} = {right}.{key}",
+                    note=f"both identify the same record by {key}",
+                )
+            )
+    return tuple(joins)
 
 
 _ANNOTATION = " (the device named "

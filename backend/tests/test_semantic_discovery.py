@@ -287,3 +287,49 @@ def test_online_device_question_uses_the_approved_view_without_an_llm() -> None:
     assert isinstance(result, QueryResult)
     assert "FROM eaip_curated.v_devices" in captured["sql"]
     assert "status = 'online'" in captured["sql"]
+
+
+def test_joins_are_inferred_for_entity_identifiers() -> None:
+    """Without a join path, a question needing two views is unanswerable.
+
+    v_device_metrics carries device_id and no name; v_devices carries the name.
+    "Which is hotter, the office or the server room?" needs both, and nothing
+    told the model it could put them together — so it refused, correctly, given
+    what it had been shown.
+
+    Only ENTITY identifiers are joined on. Two views sharing a `status` column
+    are not thereby related, and this module's docstring says so.
+    """
+    semantics = from_discovered_schema(
+        [
+            {
+                "name": "curated.v_devices",
+                "columns": [{"name": "device_id"}, {"name": "device_name"}, {"name": "status"}],
+            },
+            {
+                "name": "curated.v_metrics",
+                "columns": [{"name": "device_id"}, {"name": "value"}, {"name": "status"}],
+            },
+        ],
+        connector_name="IoT",
+    )
+
+    assert len(semantics.joins) == 1
+    join = semantics.joins[0]
+    assert "device_id" in join.on
+    # `status` is shared by both views and is not a relationship.
+    assert "status" not in join.on
+
+
+def test_a_column_is_not_assumed_to_exist_everywhere() -> None:
+    """device_name was hinted on two views, so the model used it on a third.
+
+    The resulting SQL failed, and the failure reached the user as a refusal.
+    The note is what stops the inference.
+    """
+    semantics = from_discovered_schema(
+        [{"name": "curated.v_metrics", "columns": [{"name": "device_id"}]}],
+        connector_name="IoT",
+    )
+
+    assert any("only in the views that list it" in note for note in semantics.notes)

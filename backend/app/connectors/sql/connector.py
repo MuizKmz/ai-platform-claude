@@ -43,6 +43,25 @@ from app.core.security import Principal
 
 logger = logging.getLogger(__name__)
 
+# Markers that mean "the server understood the query and rejected it", not
+# "the server is unreachable". Both arrive as OperationalError, and telling
+# them apart is the difference between checking a tunnel and fixing a column
+# name — two separate debugging sessions went hunting a dropped SSH tunnel
+# that was up the whole time. Matched against the driver's own text, which is
+# inspected here and never echoed to a caller.
+_QUERY_LEVEL_ERRORS = (
+    "unknown column",
+    "unknown table",
+    "doesn't exist",
+    "does not exist",
+    "no such column",
+    "no such table",
+    "undefined column",
+    "undefined table",
+    "ambiguous",
+    "syntax error",
+)
+
 
 @dataclass(frozen=True)
 class SQLConnectorConfig:
@@ -245,9 +264,24 @@ class SQLConnector(Connector):
                 columns = tuple(result.keys())
                 rows = tuple(tuple(row) for row in result.fetchall())
         except OperationalError as exc:
-            if "statement timeout" in str(exc).lower():
+            detail = str(exc).lower()
+            if "statement timeout" in detail:
                 raise ConnectorError(
                     f"The query exceeded the {self._config.statement_timeout_ms}ms time limit."
+                ) from exc
+            # OperationalError covers an unreachable server AND a query the
+            # server understood well enough to reject — MySQL reports an
+            # unknown column this way. Collapsing both into "could not be
+            # reached" sent two separate debugging sessions hunting a dropped
+            # SSH tunnel that was up the whole time.
+            #
+            # The message still names no schema, column, or role: the caller is
+            # told which KIND of problem this is, not what the database
+            # revealed about itself.
+            if any(marker in detail for marker in _QUERY_LEVEL_ERRORS):
+                raise ConnectorError(
+                    "The query referred to something this view does not have — "
+                    "check the column and view names against the approved schema."
                 ) from exc
             raise ConnectorError("The database could not be reached.") from exc
         except DBAPIError as exc:

@@ -187,6 +187,41 @@ def needs_agent(question: str) -> bool:
     )
 
 
+# Phrasings that are plainly NOT about live data. Everything else, when a
+# database tool is available, goes to the agent and lets the model decide.
+#
+# This inversion was earned. The vocabulary above grew one bug report at a
+# time — `its`, `temperature`, `hotter`, then `machines` and `down` and
+# `broken` — and each addition only covered the phrasing that had already
+# failed in front of someone. "What machines are down?" matched nothing,
+# called no tool, and answered "I don't have enough information" about five
+# offline devices, because the list held `device` and `offline` and the user
+# said `machine` and `down`.
+#
+# Guessing a person's vocabulary in advance is not winnable. The model is
+# better at it, and the cost of asking is one planning call.
+_CLEARLY_DOCUMENTARY = re.compile(
+    r"\b(?:polic(?:y|ies)|procedure|handbook|manual|guide|document|"
+    r"contract|agreement|warranty|terms|clause|"
+    r"who wrote|according to|summari[sz]e|explain the)\b",
+    re.IGNORECASE,
+)
+
+
+def should_try_live_data(question: str, *, has_database_tool: bool) -> bool:
+    """Whether to let the agent consider the database for this question.
+
+    With no database tool authorized there is nothing to consider, and the
+    keyword vocabulary is all that is left. With one, the default flips: the
+    agent runs unless the question is obviously about documents.
+    """
+    if not has_database_tool:
+        return needs_agent(question)
+    if _CLEARLY_DOCUMENTARY.search(question):
+        return needs_agent(question)
+    return True
+
+
 def _stored_tool_name(slug: str, connector_id: object, names: set[str]) -> str:
     """Create a stable, model-callable name without trusting a display slug."""
     safe_slug = re.sub(r"[^a-z0-9_]+", "_", slug.lower()).strip("_") or "database"
@@ -385,12 +420,18 @@ def ask_agent(
     trace_id = new_trace_id()
     question = _question_with_context(request.question, request.context)
 
-    if not request.force_agent and not needs_agent(question):
+    # Built BEFORE routing, because whether a database is reachable is the most
+    # useful fact available for deciding where a question should go — and it is
+    # a fact rather than a guess about someone's vocabulary.
+    registry = build_registry(db, principal, llm)
+    database_tool = _single_database_tool(registry, principal)
+
+    if not request.force_agent and not should_try_live_data(
+        question, has_database_tool=database_tool is not None
+    ):
         # Routed to grounded generation. The agent is not free, and a question
         # with one obvious source does not need a planning call to discover it.
         return _answer_directly(db, principal, question, llm, trace_id)
-
-    registry = build_registry(db, principal, llm)
 
     # One live-data source is not an agent problem. Letting the planner choose
     # the only authorized SQL tool adds an LLM round trip and can produce
@@ -398,7 +439,7 @@ def ask_agent(
     if (
         not request.force_agent
         and not _MULTI_STEP.search(question)
-        and (tool_name := _single_database_tool(registry, principal))
+        and (tool_name := database_tool)
     ):
         return _answer_from_one_database(
             db,
