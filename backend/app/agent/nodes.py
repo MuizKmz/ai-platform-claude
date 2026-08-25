@@ -288,6 +288,9 @@ def act_node(
     started = time.perf_counter()
     try:
         result = registry.invoke(principal, tool_name, **arguments)
+        tool_cost = result.metadata.get("cost_usd", 0.0)
+        if isinstance(tool_cost, int | float) and tool_cost > 0:
+            budget.record_cost(float(tool_cost))
         call = ToolCall(
             tool=tool_name,
             arguments=arguments,

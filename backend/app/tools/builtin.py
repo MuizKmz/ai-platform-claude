@@ -13,17 +13,19 @@ of that would be a second, weaker copy of the rules.
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.connectors.base import Connector, ConnectorError
+from app.connectors.base import Connector, ConnectorError, QueryResult
 from app.core.config import settings
 from app.core.security import Principal
 from app.knowledge.embedding import EmbeddingProvider
 from app.knowledge.retrieval import search
 from app.llm.base import LLMProvider
+from app.observability.audit import record_query
 from app.tools.base import Tool, ToolResult, ToolSpec
 
 # How much of a chunk goes into the model's context. Whole chunks from a
@@ -105,18 +107,22 @@ class QueryDatabaseTool(Tool):
         semantics: Any,
         llm: LLMProvider,
         required_labels: tuple[str, ...],
+        *,
+        tool_name: str = "query_database",
     ) -> None:
         self._session = session
         self._connector = connector
         self._semantics = semantics
         self._llm = llm
         self._required_labels = required_labels
+        self._tool_name = tool_name
 
     @property
     def spec(self) -> ToolSpec:
         return ToolSpec(
-            name="query_database",
+            name=self._tool_name,
             description=(
+                f"Query approved structured data from {self._connector.info.display_name}. "
                 "Query structured business data — orders, customers, products, "
                 "line items. Use this for counts, totals, averages, rankings, "
                 "and anything needing arithmetic over records. Read-only."
@@ -135,6 +141,31 @@ class QueryDatabaseTool(Tool):
         if not question:
             return ToolResult(content="", error="No question was provided.")
 
+        templated = _run_iot_device_status_template(
+            self._connector, self._semantics, principal, question
+        ) or _run_iot_metric_template(self._connector, self._semantics, principal, question)
+        if templated is not None:
+            if isinstance(templated, ConnectorError):
+                return ToolResult(
+                    content=str(templated),
+                    error=str(templated),
+                    metadata={"refused": True},
+                )
+            record_query(
+                self._session,
+                principal=principal,
+                connector_id=self._connector.info.id,
+                sql=templated.sql,
+                question=question,
+                allowed=True,
+                row_count=templated.row_count,
+                duration_ms=templated.duration_ms,
+            )
+            return _render_query_result(
+                templated,
+                metadata={"template": "approved_iot_template"},
+            )
+
         # Imported here rather than at module scope: the tool layer must not
         # make the connector layer a hard import of the agent package.
         from app.tools.query_structured_data import query_structured_data
@@ -152,23 +183,120 @@ class QueryDatabaseTool(Tool):
             return ToolResult(
                 content=answer.error or "That question could not be answered from the database.",
                 error=answer.error,
-                metadata={"refused": True},
+                metadata={"refused": True, "cost_usd": answer.cost_usd},
             )
 
         # The SQL is included because it always is — roughly one generated
         # query in five is wrong, and an answer whose query is hidden presents
         # a guess as a fact.
-        rows = "\n".join(" | ".join(str(value) for value in row) for row in answer.result.rows[:25])
-        content = (
-            f"SQL: {answer.result.sql}\n\nColumns: {' | '.join(answer.result.columns)}\n{rows}"
+        return _render_query_result(answer.result, metadata={"cost_usd": answer.cost_usd})
+
+
+_RELATIVE_HOURS = re.compile(r"\b(?:last|past)\s+(\d+)\s+hours?\b", re.IGNORECASE)
+_SQL_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$")
+_SQL_ALIAS = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_DEVICE_STATUS = re.compile(r"\b(online|offline)\b", re.IGNORECASE)
+_DEVICE_COUNT = re.compile(r"\b(?:how many|count|number of|total)\b", re.IGNORECASE)
+_DEVICE_LIST = re.compile(r"\b(?:what|which|list|show)\b.*\bdevices?\b", re.IGNORECASE)
+
+
+def _run_iot_device_status_template(
+    connector: Connector, semantics: Any, principal: Principal, question: str
+) -> QueryResult | ConnectorError | None:
+    """Answer basic online/offline device questions without a model call."""
+    status_match = _DEVICE_STATUS.search(question)
+    if status_match is None:
+        return None
+    # Do not take over a richer metric question just because it mentions an
+    # online device. Those require the reviewed metric mapping or the SQL model.
+    if re.search(r"\b(?:temperature|metric|average|avg|minimum|min|maximum|max)\b", question, re.I):
+        return None
+    devices_view = next(
+        (
+            view.name
+            for view in getattr(semantics, "views", ())
+            if view.name.endswith(".v_devices")
+            and {column.name for column in view.columns} >= {"device_id", "device_name", "status"}
+        ),
+        None,
+    )
+    if devices_view is None or not _SQL_IDENTIFIER.fullmatch(devices_view):
+        return None
+    status = status_match.group(1).lower()
+    if _DEVICE_COUNT.search(question):
+        sql = f"SELECT COUNT(*) AS {status}_devices FROM {devices_view} WHERE status = '{status}'"  # noqa: S608
+    elif _DEVICE_LIST.search(question):
+        sql = (  # noqa: S608
+            "SELECT device_id, device_name, status "  # noqa: S608
+            f"FROM {devices_view} WHERE status = '{status}' ORDER BY device_name"  # noqa: S608
         )
-        return ToolResult(
-            content=content,
-            metadata={
-                "row_count": answer.result.row_count,
-                "truncated": answer.result.truncated,
-            },
+    else:
+        return None
+    try:
+        return connector.query(principal, sql)  # type: ignore[attr-defined, no-any-return]
+    except ConnectorError as exc:
+        return exc
+
+
+def _run_iot_metric_template(
+    connector: Connector, semantics: Any, principal: Principal, question: str
+) -> QueryResult | ConnectorError | None:
+    """Run a reviewed aggregate without a model-generated SQL step."""
+    lowered = question.lower()
+    operation = (
+        ("AVG", "average")
+        if re.search(r"\b(?:average|avg|mean)\b", lowered)
+        else ("MIN", "min")
+        if re.search(r"\b(?:minimum|min)\b", lowered)
+        else ("MAX", "max")
+        if re.search(r"\b(?:maximum|max)\b", lowered)
+        else None
+    )
+    if operation is None:
+        return None
+    for template in getattr(semantics, "iot_metric_templates", ()):
+        if not any(alias and alias in lowered for alias in template.aliases):
+            continue
+        # View names came from the connector's metadata discovery. Check their
+        # identifier form again so reviewed profile content can never choose a
+        # relation or introduce SQL syntax.
+        if not (
+            _SQL_IDENTIFIER.fullmatch(template.devices_view)
+            and _SQL_IDENTIFIER.fullmatch(template.metrics_view)
+        ):
+            continue
+        device = template.device_name.replace("'", "''")
+        metric = template.metric.replace("'", "''")
+        where = f"d.device_name = '{device}' AND dm.metric = '{metric}'"
+        if match := _RELATIVE_HOURS.search(question):
+            hours = min(int(match.group(1)), 24 * 31)
+            where += f" AND dm.event_time >= NOW() - INTERVAL '{hours}' HOUR"
+        alias = f"{operation[1]}_{template.metric}".replace("-", "_")
+        if not _SQL_ALIAS.fullmatch(alias):
+            continue
+        # This SQL has only static clauses, a capped integer, discovered view
+        # identifiers, and quote-escaped reviewed values. The SQL connector
+        # performs its normal read-only/view allow-list validation before it is
+        # sent to MariaDB; the dedicated database reader is the final boundary.
+        sql = (
+            f"SELECT {operation[0]}(dm.value) AS {alias} FROM {template.metrics_view} AS dm "  # noqa: S608
+            f"JOIN {template.devices_view} AS d ON dm.device_id = d.device_id WHERE {where}"
         )
+        try:
+            return connector.query(principal, sql)  # type: ignore[attr-defined, no-any-return]
+        except ConnectorError as exc:
+            return exc
+    return None
+
+
+def _render_query_result(result: QueryResult, *, metadata: dict[str, Any]) -> ToolResult:
+    """Technical details remain exact and expandable in the console."""
+    rows = "\n".join(" | ".join(str(value) for value in row) for row in result.rows[:25])
+    content = f"SQL: {result.sql}\n\nColumns: {' | '.join(result.columns)}\n{rows}"
+    return ToolResult(
+        content=content,
+        metadata={"row_count": result.row_count, "truncated": result.truncated, **metadata},
+    )
 
 
 class CallApiTool(Tool):
