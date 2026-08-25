@@ -11,6 +11,7 @@ from app.db.models.document import Document
 from app.db.models.ingest_job import IngestJob
 from app.db.models.tenant import Tenant
 from app.db.models.trace_span import TraceSpan
+from app.db.models.training import TrainingRecord
 from app.db.models.user import User
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "IngestJob",
     "Tenant",
     "TraceSpan",
+    "TrainingRecord",
     "User",
 ]

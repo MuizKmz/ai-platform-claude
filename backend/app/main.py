@@ -19,6 +19,7 @@ from app.api.v1.jobs import router as jobs_router
 from app.api.v1.me import router as me_router
 from app.api.v1.observability import router as observability_router
 from app.api.v1.search import router as search_router
+from app.api.v1.training import router as training_router
 from app.api.v1.users import router as users_router
 from app.core.config import settings
 from app.mcp.server import router as mcp_router
@@ -61,6 +62,7 @@ app.include_router(chat_router)
 app.include_router(documents_router)
 app.include_router(jobs_router)
 app.include_router(integrations_router)
+app.include_router(training_router)
 app.include_router(approvals_router)
 app.include_router(mcp_router)
 app.include_router(observability_router)
