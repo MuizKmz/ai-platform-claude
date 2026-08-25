@@ -117,6 +117,12 @@ class _JWKSCache:
             # and answering 401 would send an operator hunting a bad token that
             # does not exist.
             raise OIDCConfigurationError(f"identity provider unreachable: {self._url}") from exc
+        except jwt.PyJWTError as exc:
+            # Reading the `kid` means parsing the token, so a malformed one
+            # raises DecodeError here rather than at verification. It is not a
+            # PyJWKClientError and went uncaught until a curl with the word
+            # "not-a-token" returned 500 instead of 401.
+            raise AuthError("token could not be parsed") from exc
         except _PyJWKClientError:
             with self._lock:
                 self._client = None
@@ -124,7 +130,7 @@ class _JWKSCache:
                 return self._client_now().get_signing_key_from_jwt(token).key
             except (_PyJWKClientConnectionError, URLError) as exc:
                 raise OIDCConfigurationError(f"identity provider unreachable: {self._url}") from exc
-            except _PyJWKClientError as exc:
+            except (_PyJWKClientError, jwt.PyJWTError) as exc:
                 # The kid is genuinely not published, or the token carries no
                 # usable one at all. Either way it cannot be verified, and that
                 # is a caller problem.

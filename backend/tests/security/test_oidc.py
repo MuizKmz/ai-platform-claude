@@ -207,6 +207,30 @@ def test_symmetric_signature_against_the_public_key_is_refused(
         oidc.principal_from_oidc_token(forged)
 
 
+@pytest.mark.parametrize(
+    "garbage",
+    [
+        "not-a-token",
+        "",
+        "only.two",
+        "a.b.c.d",
+        "....",
+        "Bearer something",
+        "eyJhbGciOiJSUzI1NiJ9",
+    ],
+)
+def test_malformed_tokens_are_refused_not_a_server_error(garbage: str) -> None:
+    """A 500 tells a caller they found a bug. A 401 tells them nothing.
+
+    Every other test here uses a well-formed token, which is exactly how this
+    escaped: reading the `kid` parses the token, so garbage raises DecodeError
+    at key lookup rather than at verification. It surfaced as a 500 from
+    /v1/me on the first curl with a nonsense token in it.
+    """
+    with pytest.raises(AuthError):
+        oidc.principal_from_oidc_token(garbage)
+
+
 def test_a_token_signed_by_another_key_is_refused() -> None:
     other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     with pytest.raises(AuthError):
