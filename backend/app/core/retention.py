@@ -104,6 +104,15 @@ POLICIES: tuple[RetentionPolicy, ...] = (
         # execute; it cannot erase the trail.
         reason="evidence that a human approved a write; the record an auditor asks for",
     ),
+    RetentionPolicy(
+        table="training_record",
+        days=365,
+        # Same shape as approval_request: a human reviewed and activated the
+        # profile that shapes what an integration is allowed to say. "Who
+        # approved this integration's data profile, and what did it say" is a
+        # compliance question, not operational noise.
+        reason="evidence of a reviewed, activated integration data profile",
+    ),
 )
 
 # Rows per table per run. Bounded so a first run against a large backlog cannot
