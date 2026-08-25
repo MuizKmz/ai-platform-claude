@@ -186,6 +186,25 @@ _FORBIDDEN_FUNCTIONS = frozenset(
     }
 )
 
+# sqlglot represents the unit in a MySQL interval expression (for example,
+# ``NOW() - INTERVAL 24 HOUR``) as ``exp.Var``.  ``Var`` may also represent
+# other dialect-specific syntax, so it must not be added to the general AST
+# allowlist.  It is accepted only when it is the unit of an Interval and is one
+# of these fixed time units.
+_SAFE_INTERVAL_UNITS = frozenset(
+    {
+        "MICROSECOND",
+        "SECOND",
+        "MINUTE",
+        "HOUR",
+        "DAY",
+        "WEEK",
+        "MONTH",
+        "QUARTER",
+        "YEAR",
+    }
+)
+
 
 class UnsafeSQLError(Exception):
     """The statement was refused. Safe to show a caller: it explains what was
@@ -290,11 +309,22 @@ def _assert_no_writes(statement: exp.Expression) -> None:
 def _assert_allowed_nodes(statement: exp.Expression) -> None:
     """Every node must be on the allowlist. Unrecognised constructs are refused."""
     for node in statement.walk():
+        if _is_safe_interval_unit(node):
+            continue
         if not isinstance(node, tuple(_ALLOWED_NODES)):
             raise UnsafeSQLError(
                 f"{type(node).__name__} is not an allowed SQL construct. "
                 "Only read-only analytical queries are permitted."
             )
+
+
+def _is_safe_interval_unit(node: exp.Expression) -> bool:
+    """Allow only fixed MySQL interval units, never arbitrary ``Var`` nodes."""
+    if not isinstance(node, exp.Var) or not isinstance(node.parent, exp.Interval):
+        return False
+    if node.parent.args.get("unit") is not node:
+        return False
+    return str(node.this).upper() in _SAFE_INTERVAL_UNITS
 
 
 def _assert_no_forbidden_functions(statement: exp.Expression) -> None:

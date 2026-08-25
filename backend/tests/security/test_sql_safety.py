@@ -170,6 +170,25 @@ def test_oversized_limit_is_lowered() -> None:
     assert result.limit_applied is True
 
 
+def test_mysql_last_24_hours_interval_is_permitted() -> None:
+    """MySQL parses the HOUR unit as exp.Var; permit that narrow safe form."""
+    result = validate(
+        "SELECT AVG(value) FROM curated.v_metrics WHERE event_time >= NOW() - INTERVAL 24 HOUR",
+        dialect="mysql",
+    )
+
+    assert "INTERVAL '24' HOUR" in result.sql.upper()
+
+
+def test_unsupported_mysql_interval_unit_remains_rejected() -> None:
+    with pytest.raises(UnsafeSQLError, match="Var is not an allowed"):
+        validate(
+            "SELECT AVG(value) FROM curated.v_metrics "
+            "WHERE event_time >= NOW() - INTERVAL 24 FORTNIGHT",
+            dialect="mysql",
+        )
+
+
 def test_reasonable_limit_is_left_alone() -> None:
     result = validate("SELECT * FROM curated.v_orders LIMIT 10")
 
