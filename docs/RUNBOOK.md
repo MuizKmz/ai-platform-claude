@@ -222,8 +222,13 @@ told us because nothing was looking.
 **An untested backup is not a backup.** The procedure below is exercised by
 `test_restore_from_backup`, which dumps the live database, restores it into a
 scratch database, runs a similarity search against the restored data, and drops
-it. Verified on this machine: 4 tenants, 8 documents, 263 chunks, 263
-embeddings — none re-embedded.
+it. Verified on this machine (2026-08-25): 5 tenants, 7 documents, 261 chunks,
+261 embeddings — none re-embedded.
+
+Since Phase 11 the identity database is exercised the same way, by
+`test_a_restored_realm_still_has_its_users` and
+`test_restored_users_keep_the_claims_the_api_requires`. Verified in the same
+run: 2 realms, 3 users, 1 carrying a `tenant_id` the API can authorize.
 
 ```powershell
 cd backend
@@ -236,17 +241,43 @@ uv run pytest tests/security/test_restore.py -v
 .\infra\backup\backup.ps1
 ```
 
-Writes a timestamped custom-format dump to `infra/backup/dumps/`.
+Writes **two** timestamped custom-format dumps to `infra/backup/dumps/` — EAIP's
+database and Keycloak's. It refuses to run if the identity container is down
+rather than quietly producing half a backup; `-SkipKeycloak` is the deliberate
+opt-out for a deployment that genuinely has no identity provider.
 
 ### Restoring
 
+**Both dumps, or you have not recovered.** EAIP's database holds the documents,
+the integrations, and the encrypted credentials. Keycloak's holds the accounts:
+who exists, their password hashes, their `tenant_id` and labels. Restoring EAIP
+alone gives you every document and nobody who can log in to read them.
+
 ```powershell
-.\infra\backup\restore.ps1 -DumpFile infra\backup\dumps\eaip-20260820-120000.dump -Database eaip_restored
+# The platform's data
+.\infra\backup\restore.ps1 -DumpFile infra\backup\dumps\eaip-20260825-102217.dump -Database eaip_restored
+
+# The accounts
+.\infra\backup\restore.ps1 -DumpFile infra\backup\dumps\keycloak-20260825-102217.dump `
+    -Database keycloak_restored -Container eaip-keycloak-db -User keycloak
 ```
 
-Restores into a **new** database by default. Overwriting the live one requires
-naming it explicitly, because a restore is the operation most likely to be run
-in a hurry.
+Restores into a **new** database by default. Overwriting a live one requires
+`-Force`, and both `eaip` and `keycloak` are treated as live — because a restore
+is the operation most likely to be run in a hurry by someone already having a
+bad day.
+
+Each verifies what matters for *that* database: the EAIP restore checks that
+chunks kept their embeddings, the Keycloak restore that users kept their
+credentials and their `tenant_id`. A user whose `tenant_id` was lost signs in at
+Keycloak successfully and is then refused by the API — invariant #1 refuses a
+token with no tenancy rather than defaulting it — which is a confusing symptom
+to debug if you do not know to look here.
+
+**If only the realm file survives:** `infra/keycloak/realm-eaip.json` re-imports
+the realm, clients, roles, and claim mappers. It contains **no users** by
+design, so every account must be recreated by hand. That is the recovery you get
+without a Keycloak dump.
 
 ### What recovery actually costs
 
