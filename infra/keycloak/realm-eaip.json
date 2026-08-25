@@ -1,0 +1,181 @@
+{
+  "realm": "eaip",
+  "enabled": true,
+  "displayName": "EAIP",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "passwordPolicy": "length(12) and notUsername and notEmail",
+  "roles": {
+    "realm": [
+      {
+        "name": "reader",
+        "description": "Ask questions; read documents and approved data."
+      },
+      {
+        "name": "analyst",
+        "description": "Everything a reader may do, plus proposing a write for approval (Phase 9)."
+      },
+      {
+        "name": "admin",
+        "description": "Manage integrations, users, training, and approve writes. A requester cannot approve their own request."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "eaip-console",
+      "name": "EAIP Console",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      },
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "defaultClientScopes": [
+        "eaip-identity"
+      ]
+    },
+    {
+      "clientId": "eaip-mcp",
+      "name": "EAIP MCP",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "eaip-identity"
+      ]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "eaip-identity",
+      "description": "EAIP tenancy and permission claims",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "eaip-tenant-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "https://eaip\\.dev/tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "eaip-labels",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "labels",
+            "claim.name": "https://eaip\\.dev/labels",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "eaip-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "eaip-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "eaip-email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "email",
+            "claim.name": "email",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "eaip-realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "eaip-subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subType": null,
+        "config": {
+          "kc.user.profile.config": [
+            "{\n  \"attributes\": [\n    {\n      \"name\": \"username\",\n      \"displayName\": \"${username}\",\n      \"validations\": {\n        \"length\": {\n          \"min\": 3,\n          \"max\": 255\n        },\n        \"username-prohibited-characters\": {}\n      },\n      \"permissions\": {\n        \"view\": [\n          \"admin\",\n          \"user\"\n        ],\n        \"edit\": [\n          \"admin\"\n        ]\n      },\n      \"multivalued\": false\n    },\n    {\n      \"name\": \"email\",\n      \"displayName\": \"${email}\",\n      \"validations\": {\n        \"email\": {},\n        \"length\": {\n          \"max\": 255\n        }\n      },\n      \"required\": {\n        \"roles\": [\n          \"user\"\n        ]\n      },\n      \"permissions\": {\n        \"view\": [\n          \"admin\",\n          \"user\"\n        ],\n        \"edit\": [\n          \"admin\"\n        ]\n      },\n      \"multivalued\": false\n    },\n    {\n      \"name\": \"firstName\",\n      \"displayName\": \"${firstName}\",\n      \"validations\": {\n        \"length\": {\n          \"max\": 255\n        },\n        \"person-name-prohibited-characters\": {}\n      },\n      \"permissions\": {\n        \"view\": [\n          \"admin\",\n          \"user\"\n        ],\n        \"edit\": [\n          \"admin\"\n        ]\n      },\n      \"multivalued\": false\n    },\n    {\n      \"name\": \"lastName\",\n      \"displayName\": \"${lastName}\",\n      \"validations\": {\n        \"length\": {\n          \"max\": 255\n        },\n        \"person-name-prohibited-characters\": {}\n      },\n      \"permissions\": {\n        \"view\": [\n          \"admin\",\n          \"user\"\n        ],\n        \"edit\": [\n          \"admin\"\n        ]\n      },\n      \"multivalued\": false\n    },\n    {\n      \"name\": \"tenant_id\",\n      \"displayName\": \"EAIP tenant id\",\n      \"required\": {\n        \"roles\": [\n          \"user\"\n        ]\n      },\n      \"validations\": {\n        \"length\": {\n          \"min\": 36,\n          \"max\": 36\n        }\n      },\n      \"permissions\": {\n        \"view\": [\n          \"admin\"\n        ],\n        \"edit\": [\n          \"admin\"\n        ]\n      },\n      \"multivalued\": false\n    },\n    {\n      \"name\": \"labels\",\n      \"displayName\": \"EAIP permission labels\",\n      \"validations\": {\n        \"length\": {\n          \"max\": 255\n        }\n      },\n      \"permissions\": {\n        \"view\": [\n          \"admin\"\n        ],\n        \"edit\": [\n          \"admin\"\n        ]\n      },\n      \"multivalued\": true\n    }\n  ]\n}"
+          ]
+        }
+      }
+    ]
+  }
+}

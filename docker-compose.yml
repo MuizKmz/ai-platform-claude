@@ -66,6 +66,78 @@ services:
       timeout: 5s
       retries: 15
 
+  # The identity provider (ADR 0009). Everything above this line existed before
+  # anyone could log in properly; this is what makes a second user possible.
+  #
+  # Port 8081 on the host: 8080 is Keycloak's own default and is the single most
+  # contested port on a development machine. Same reasoning as Postgres on 5433.
+  #
+  # `start-dev` is deliberate and is NOT a production command. It serves plain
+  # HTTP, disables the hostname strictness that a real deployment needs, and
+  # keeps an in-memory cache. Production uses `start` behind TLS — see
+  # docker-compose.prod.yml, which overrides this.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: eaip-keycloak
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      # The bootstrap admin. Development only: production creates an admin
+      # interactively and this pair is never set, so there is no default
+      # credential to forget about.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Its own database, in its own container. Sharing EAIP's Postgres would
+      # put a third-party product's schema and migrations inside the database
+      # whose RLS policies are the platform's tenant boundary.
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev-password}
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "${KEYCLOAK_PORT:-8081}:8080"
+    volumes:
+      # Imported ONCE, when the realm does not already exist. Editing the file
+      # afterwards changes nothing until the volume is reset — realm changes
+      # made in the console are the source of truth from then on.
+      - ./infra/keycloak/realm-eaip.json:/opt/keycloak/data/import/realm-eaip.json:ro
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      # The management port (9000) serves health; the distroless image has no
+      # shell and no curl, so this uses the JVM's own client.
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Keycloak's own storage. Separate from EAIP's Postgres on purpose — see the
+  # KC_DB comment above. It is also a separate backup obligation: a restore that
+  # recovers EAIP but not this one recovers a platform nobody can log into.
+  keycloak-db:
+    image: postgres:17-alpine
+    container_name: eaip-keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev-password}
+      POSTGRES_DB: keycloak
+    volumes:
+      - keycloakdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   pgdata:
   mysqldata:
+  keycloakdata:
