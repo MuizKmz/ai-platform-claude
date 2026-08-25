@@ -170,3 +170,25 @@
   note: >-
     Prediction, not retrieval. The platform reports what was measured; a
     forecast would be invention presented in the same voice as a fact.
+
+# --- KNOWN BUG, found in manual testing 2026-08-25 ----------------------------
+#
+# Not a question: a note where the next person will trip over it.
+#
+# When the SSH tunnel is down, `_register_stored_sql_tools` catches the
+# ConnectorError from describe_schema, logs a warning, and skips the connector.
+# The agent then answers from documents alone and reports the absence as fact:
+#
+#   "The information about the total number of devices is not available in
+#    the accessible documents."
+#
+# That sentence is true and useless. The real answer is "your IoT integration
+# is unreachable", and the user cannot tell the difference between a dropped
+# tunnel and a platform that does not know anything.
+#
+# Worse, the trace shows a DENIAL for `query_database` — the analytics tool the
+# caller has no label for — which points at the wrong problem entirely.
+#
+# Phase 7's own rule: "a dead connector produces an explicit 'I could not reach
+# X', not a hallucinated substitute." The failure is logged server-side and
+# never reaches the answer.
