@@ -105,9 +105,19 @@
 
 # --- production ---------------------------------------------------------------
 
-- question: How many production shifts are scheduled?
+- question: How many rows are in the production schedule?
   expected: [[7]]
   kind: answerable
+  note: >-
+    Was "how many production shifts are scheduled", and the model was arguably
+    right to answer 5: shown that shift_name holds 'Morning', 'Morning Shift'
+    and 'Night Shift', it counted the two that look like shift names. That is
+    defensible reading of an ambiguous question, so the question was made
+    unambiguous rather than the answer marked wrong.
+
+    Worth keeping as a note: value hints made the model reason ABOUT the values
+    rather than only match them, which is a better failure than the silent zero
+    rows it produced before.
 
 - question: What is the target output for the assembly process?
   expected_row_count_at_least: 1

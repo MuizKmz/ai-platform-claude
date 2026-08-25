@@ -36,7 +36,11 @@ from app.connectors.credentials import CredentialError, decrypt
 from app.connectors.egress import EgressBlockedError, EgressPolicy
 from app.connectors.registry_store import build_connector
 from app.connectors.sql.connector import SQLConnector, SQLConnectorConfig
-from app.connectors.sql.semantic_layer import ANALYTICS_SEMANTICS, from_discovered_schema
+from app.connectors.sql.semantic_layer import (
+    ANALYTICS_SEMANTICS,
+    discover_value_hints,
+    from_discovered_schema,
+)
 from app.core.config import settings
 from app.core.quota import record_spend
 from app.core.security import Principal
@@ -243,12 +247,18 @@ def _register_stored_sql_tools(
             continue
 
         reviewed_training = row["reviewed_training"]
+        # What the enumeration columns actually contain. Without this the model
+        # matches on the user's word — `status = 'down'` against a column
+        # holding online/offline — and returns zero rows, which reads as
+        # "nothing is down" rather than as a failure.
+        value_hints = discover_value_hints(connector, principal, discovered)
         semantics = from_discovered_schema(
             discovered,
             connector_name=connector.info.display_name,
             reviewed_training=dict(reviewed_training)
             if isinstance(reviewed_training, dict)
             else None,
+            value_hints=value_hints,
         )
         if not semantics.views:
             logger.warning(

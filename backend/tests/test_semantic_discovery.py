@@ -3,8 +3,141 @@
 from types import SimpleNamespace
 
 from app.connectors.base import QueryResult
-from app.connectors.sql.semantic_layer import from_discovered_schema
+from app.connectors.sql.semantic_layer import (
+    MAX_HINTED_VALUES,
+    discover_value_hints,
+    from_discovered_schema,
+)
 from app.tools.builtin import _run_iot_device_status_template
+
+
+def _connector_returning(values_by_column: dict[str, list[str]]) -> SimpleNamespace:
+    """A connector that answers DISTINCT queries from a canned mapping."""
+
+    def query(_principal: object, sql: str) -> QueryResult:
+        for column, values in values_by_column.items():
+            if f"SELECT DISTINCT {column} " in sql:
+                return QueryResult(
+                    (column,), tuple((v,) for v in values), sql, len(values), False, 1.0
+                )
+        return QueryResult((), (), sql, 0, False, 1.0)
+
+    return SimpleNamespace(query=query)
+
+
+def test_value_hints_reach_the_prompt() -> None:
+    """The fix for the failure that started this: `status = 'down'`.
+
+    Asked "what machines are down", the model matched the user's word against a
+    column holding online/offline and returned zero rows — which reads as
+    "nothing is down" while five devices were. Naming the values moved the IoT
+    eval from 83% to 100% execution accuracy.
+    """
+    discovered = [
+        {
+            "name": "curated.v_devices",
+            "columns": [{"name": "status", "type": "varchar"}],
+        }
+    ]
+    connector = _connector_returning({"status": ["online", "offline"]})
+
+    hints = discover_value_hints(connector, object(), discovered)
+    assert hints == {"curated.v_devices.status": ("offline", "online")}
+
+    semantics = from_discovered_schema(discovered, connector_name="IoT", value_hints=hints)
+    prompt = semantics.to_prompt()
+    assert "'offline'" in prompt
+    assert "'online'" in prompt
+
+
+def test_only_enumeration_columns_are_read() -> None:
+    """An allowlist, not a cardinality test.
+
+    "Few distinct values" also describes a table of six customers. Enumerating
+    people into a prompt is exactly what this must never do, so the gate is the
+    column NAME — device_name is not on the list however few there are.
+    """
+    discovered = [
+        {
+            "name": "curated.v_devices",
+            "columns": [
+                {"name": "status", "type": "varchar"},
+                {"name": "device_name", "type": "varchar"},
+                {"name": "email", "type": "varchar"},
+            ],
+        }
+    ]
+    connector = _connector_returning(
+        {
+            "status": ["online"],
+            "device_name": ["SERVER ROOM UNIT"],
+            "email": ["alice@acme.test"],
+        }
+    )
+
+    hints = discover_value_hints(connector, object(), discovered)
+
+    assert "curated.v_devices.status" in hints
+    assert "curated.v_devices.device_name" not in hints
+    assert "curated.v_devices.email" not in hints
+
+
+def test_a_column_with_too_many_values_is_dropped_not_truncated() -> None:
+    """A truncated list is worse than none: the model treats it as complete."""
+    discovered = [
+        {
+            "name": "curated.v_metrics",
+            "columns": [{"name": "metric", "type": "varchar"}],
+        }
+    ]
+    connector = _connector_returning(
+        {"metric": [f"metric_{i}" for i in range(MAX_HINTED_VALUES + 1)]}
+    )
+
+    assert discover_value_hints(connector, object(), discovered) == {}
+
+
+def test_a_failing_column_does_not_break_discovery() -> None:
+    """A hint is an optimisation. Losing one costs accuracy; raising costs the
+    whole connector, and with it every question the user could have asked."""
+    discovered = [
+        {
+            "name": "curated.v_devices",
+            "columns": [
+                {"name": "status", "type": "varchar"},
+                {"name": "level", "type": "varchar"},
+            ],
+        }
+    ]
+
+    def query(_principal: object, sql: str) -> QueryResult:
+        if "level" in sql:
+            raise RuntimeError("permission denied")
+        return QueryResult(("status",), (("online",),), sql, 1, False, 1.0)
+
+    hints = discover_value_hints(SimpleNamespace(query=query), object(), discovered)
+
+    assert hints == {"curated.v_devices.status": ("online",)}
+
+
+def test_hints_are_scoped_to_their_view() -> None:
+    """`status` means different things in two views; a hint from one would be a
+    lie in the other."""
+    discovered = [
+        {"name": "curated.v_devices", "columns": [{"name": "status", "type": "varchar"}]},
+        {"name": "curated.v_jobs", "columns": [{"name": "status", "type": "varchar"}]},
+    ]
+    semantics = from_discovered_schema(
+        discovered,
+        connector_name="IoT",
+        value_hints={"curated.v_devices.status": ("online", "offline")},
+    )
+
+    devices = next(v for v in semantics.views if v.name == "curated.v_devices")
+    jobs = next(v for v in semantics.views if v.name == "curated.v_jobs")
+
+    assert "'online'" in devices.columns[0].description
+    assert "'online'" not in jobs.columns[0].description
 
 
 def test_discovered_schema_becomes_promptable_approved_views() -> None:

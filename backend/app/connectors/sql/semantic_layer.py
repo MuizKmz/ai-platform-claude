@@ -26,9 +26,19 @@ decision cannot be introspected out of a database.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Identifier shapes, re-checked before any of these reach generated SQL. The
+# names come from the connector's own metadata discovery and are already
+# trustworthy; validating anyway is what keeps that true after a refactor moves
+# where they come from.
+_SQL_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$")
+_SQL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -158,14 +168,22 @@ def from_discovered_schema(
     *,
     connector_name: str,
     reviewed_training: dict[str, Any] | None = None,
+    value_hints: dict[str, tuple[str, ...]] | None = None,
 ) -> SemanticLayer:
     """Build a safe baseline semantic layer from approved database metadata.
 
-    A connector's reader role and configured schema decide what arrives here;
-    this function never inspects base tables or sample rows. Column names and
-    types are enough to make a newly connected system useful immediately, while
-    a data owner can later add richer metrics and join definitions where their
-    business meaning matters.
+    A connector's reader role and configured schema decide what arrives here.
+    Column names and types are enough to make a newly connected system useful
+    immediately, while a data owner can later add richer metrics and join
+    definitions where their business meaning matters.
+
+    `value_hints` maps "view.column" to the values that column actually holds,
+    for the small set of columns where that is knowable and safe — see
+    `discover_value_hints`. Without them the model can only guess at values,
+    and it guesses the user's word: asked "what machines are down" it wrote
+    `status = 'down'` against a column holding `online`/`offline` and returned
+    zero rows. A silent empty result reads as "none are down" while five were,
+    which is worse than an error.
     """
     views: list[ViewDoc] = []
     for item in discovered:
@@ -177,7 +195,7 @@ def from_discovered_schema(
         documented_columns = tuple(
             ColumnDoc(
                 name=str(column["name"]),
-                description=f"Source data type: {column.get('type', 'unknown')}.",
+                description=_describe_column(column, value_hints, name),
             )
             for column in columns
             if isinstance(column, dict) and isinstance(column.get("name"), str)
@@ -204,6 +222,120 @@ def from_discovered_schema(
         notes=tuple(notes),
         iot_metric_templates=_reviewed_iot_templates(reviewed_training, views),
     )
+
+
+def _describe_column(
+    column: dict[str, Any], hints: dict[str, tuple[str, ...]] | None, view: str
+) -> str:
+    """The column's type, plus its actual values where we know them.
+
+    Keyed by "view.column" rather than by column name alone: `status` means
+    different things in two views, and a hint from one would be a lie in the
+    other.
+    """
+    description = f"Source data type: {column.get('type', 'unknown')}."
+    values = (hints or {}).get(f"{view}.{column.get('name', '')}")
+    if values:
+        listed = ", ".join(f"'{value}'" for value in values)
+        description += f" Values are exactly: {listed}. Match these literally."
+    return description
+
+
+# How many distinct values a column may have before it stops being an
+# enumeration and starts being data. A status column has two; a device_id has
+# as many rows as devices. The line is drawn low on purpose: the point is to
+# name the vocabulary, not to dump a column into a prompt.
+MAX_HINTED_VALUES = 25
+
+# Column names that are enumerations wherever they appear. An allowlist rather
+# than "any column with few distinct values", because cardinality alone would
+# happily enumerate a small customer table into the prompt.
+HINTABLE_COLUMNS = frozenset(
+    {
+        "status",
+        "state",
+        "level",
+        "severity",
+        "metric",
+        "operator",
+        "kind",
+        "type",
+        "input_type",
+        "usage_type",
+        "shift_name",
+        "process_name",
+        "product_code",
+        "category",
+        "unit",
+    }
+)
+
+
+def discover_value_hints(
+    connector: Any,
+    principal: Any,
+    discovered: list[dict[str, Any]],
+    *,
+    max_values: int = MAX_HINTED_VALUES,
+) -> dict[str, tuple[str, ...]]:
+    """Read the distinct values of enumeration-shaped columns.
+
+    This is the one place the semantic layer looks at DATA rather than
+    metadata, so it is fenced in three ways:
+
+    1. **An allowlist of column names**, not a cardinality test. "Few distinct
+       values" would also describe a table of six customers, and enumerating
+       people into a prompt is exactly what this must not do.
+    2. **A hard cap.** A column with more than `max_values` distinct entries is
+       data, not a vocabulary, and is dropped rather than truncated — a
+       truncated list is worse than none, because the model treats it as
+       complete.
+    3. **Approved views only**, through the connector's own read-only role and
+       its AST validation. This has no privileged path of its own.
+
+    Failures are swallowed per column. A hint is an optimisation; losing one
+    costs accuracy, and raising here would cost the whole connector.
+    """
+    hints: dict[str, tuple[str, ...]] = {}
+
+    for item in discovered:
+        view = item.get("name")
+        columns = item.get("columns")
+        if not isinstance(view, str) or not isinstance(columns, list):
+            continue
+
+        for column in columns:
+            if not isinstance(column, dict):
+                continue
+            name = column.get("name")
+            if not isinstance(name, str) or name.lower() not in HINTABLE_COLUMNS:
+                continue
+
+            # Identifiers come from the connector's own metadata discovery.
+            # Re-checked anyway: this builds SQL, and a validation that only
+            # holds because of where the value came from is one refactor away
+            # from not holding.
+            if not _SQL_IDENTIFIER.fullmatch(view) or not _SQL_NAME.fullmatch(name):
+                continue
+
+            # LIMIT one above the cap, so "more than allowed" is detectable
+            # rather than silently becoming a truncated list.
+            sql = (
+                f"SELECT DISTINCT {name} FROM {view} "  # noqa: S608
+                f"WHERE {name} IS NOT NULL LIMIT {max_values + 1}"
+            )
+            try:
+                result = connector.query(principal, sql)
+            except Exception:  # noqa: BLE001 - drivers raise many types; a hint is optional
+                logger.debug("no value hint for %s.%s", view, name, exc_info=True)
+                continue
+
+            values = [str(row[0]) for row in result.rows if row and row[0] is not None]
+            if not values or len(values) > max_values:
+                continue
+            hints[f"{view}.{name}"] = tuple(sorted(values))
+
+    return hints
 
 
 def _reviewed_training_notes(profile: dict[str, Any] | None) -> list[str]:

@@ -45,7 +45,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.connectors.credentials import decrypt  # noqa: E402
 from app.connectors.registry_store import build_connector  # noqa: E402
 from app.connectors.sql.connector import SQLConnector  # noqa: E402
-from app.connectors.sql.semantic_layer import from_discovered_schema  # noqa: E402
+from app.connectors.sql.semantic_layer import (  # noqa: E402
+    discover_value_hints,
+    from_discovered_schema,
+)
 from app.core.security import Principal  # noqa: E402
 from app.db.session import owner_engine  # noqa: E402
 from app.llm.providers.openai_provider import OpenAIProvider  # noqa: E402
@@ -199,13 +202,16 @@ def main() -> int:
         ).scalar()
 
     discovered = connector.describe_schema(principal)
+    value_hints = discover_value_hints(connector, principal, discovered)
     semantics = from_discovered_schema(
         discovered,
         connector_name=connector.info.display_name,
         reviewed_training=dict(profile) if isinstance(profile, dict) else None,
+        value_hints=value_hints,
     )
 
     print(f"{len(semantics.views)} approved views, "
+          f"{len(value_hints)} column(s) with value hints, "
           f"{len(semantics.iot_metric_templates)} reviewed metric template(s), "
           f"{'a' if profile else 'NO'} reviewed training profile")
     print()
