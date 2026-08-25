@@ -63,6 +63,46 @@ class Settings(BaseSettings):
     jwt_audience: str = "eaip-api"
     jwt_ttl_minutes: int = 60
 
+    # --- Identity provider (Phase 11, ADR 0009) ---------------------------
+    # When a JWKS URL is set, tokens are verified with the provider's PUBLIC key
+    # and this process can no longer mint an identity — only check one. Empty
+    # means the local HS256 issuer is still in use, which is development only.
+    #
+    # `oidc_issuer` defaults to empty rather than to `jwt_issuer`: an issuer
+    # check that silently falls back to the local value would accept a
+    # locally-minted token against the provider's key path.
+    oidc_jwks_url: str = ""
+    oidc_issuer: str = ""
+
+    # Where identity lives in the provider's tokens. Configurable because the
+    # names are a property of the realm, not of this codebase — which is what
+    # makes swapping providers a configuration change (ADR 0009).
+    oidc_tenant_claim: str = "https://eaip.dev/tenant_id"
+    oidc_email_claim: str = "email"
+    oidc_roles_claim: str = "realm_access"
+    oidc_labels_claim: str = "https://eaip.dev/labels"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def oidc_enabled(self) -> bool:
+        """Whether a real identity provider verifies tokens.
+
+        Derived from configuration rather than set independently, so there is no
+        way to have the flag on and the URL missing.
+        """
+        return bool(self.oidc_jwks_url)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def local_tokens_allowed(self) -> bool:
+        """Whether the built-in issuer may still mint and verify tokens.
+
+        False in production once a provider is configured. `issue_token`
+        performs no credential check, so leaving it reachable beside a real IdP
+        would keep the weakest path open and make the strong one decorative.
+        """
+        return not (self.app_env == "production" and self.oidc_enabled)
+
     # --- Embeddings -------------------------------------------------------
     # Optional: tests use a deterministic fake and CI never calls the API, so the
     # suite must run without a key. Ingestion fails loudly if it is missing.

@@ -68,8 +68,19 @@ def issue_token(
 
     This is the local stand-in for an identity provider. It exists so the platform
     can be developed and tested end-to-end before an IdP is wired up; it is not an
-    authentication system and performs no credential check. Phase 8 replaces it.
+    authentication system and **performs no credential check** — it signs whatever
+    it is told. Phase 11 (ADR 0009) replaces it with Keycloak.
+
+    Refuses to run in production once a provider is configured. Leaving a
+    credential-free issuer reachable beside a real one keeps the weakest path
+    open and makes the strong one decorative, which is worse than either alone.
     """
+    if not settings.local_tokens_allowed:
+        raise AuthError(
+            "the built-in token issuer is disabled in production; "
+            "authenticate through the identity provider"
+        )
+
     now = datetime.now(UTC)
     ttl = expires_in if expires_in is not None else timedelta(minutes=settings.jwt_ttl_minutes)
     payload: dict[str, Any] = {
@@ -97,7 +108,23 @@ def principal_from_token(token: str) -> Principal:
     """Verify a token and derive the Principal, or raise AuthError.
 
     Every failure mode collapses to one exception type on purpose.
+
+    With an identity provider configured (ADR 0009) this delegates to RS256
+    verification against its published keys, and the local symmetric path below
+    is unreachable in production. The import is deferred because `core.oidc`
+    imports this module for `Principal` and `AuthError`.
     """
+    if settings.oidc_enabled:
+        from app.core.oidc import principal_from_oidc_token
+
+        return principal_from_oidc_token(token)
+
+    if not settings.local_tokens_allowed:
+        # Belt and braces: `oidc_enabled` is false here, so this is a production
+        # deployment with no provider at all. Refusing beats falling back to an
+        # issuer that checks no credentials.
+        raise AuthError("no identity provider is configured")
+
     try:
         claims = jwt.decode(
             token,
