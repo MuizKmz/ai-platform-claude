@@ -12,6 +12,7 @@ import {
   MessagesSquare,
   Sparkles,
   Terminal,
+  GraduationCap,
   Users,
 } from "lucide-react";
 
@@ -38,6 +39,7 @@ const NAV = [
   { href: "/agent", label: "Agent", icon: Sparkles },
   { href: "/knowledge", label: "Knowledge", icon: FileText },
   { href: "/integrations", label: "Integrations", icon: Database },
+  { href: "/training", label: "Training", icon: GraduationCap },
   { href: "/approvals", label: "Approvals", icon: CheckSquare },
   { href: "/users", label: "Users", icon: Users },
   { href: "/traces", label: "Traces", icon: Activity },

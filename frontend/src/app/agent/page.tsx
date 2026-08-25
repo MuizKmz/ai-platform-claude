@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CornerDownLeft, Loader2, Sparkles } from "lucide-react";
+import { CornerDownLeft, Loader2, Sparkles, X } from "lucide-react";
 
 import { AgentRunView } from "@/components/agent-run";
 import { AppShell } from "@/components/app-shell";
@@ -29,6 +29,7 @@ export default function AgentPage() {
   const [forceAgent, setForceAgent] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deviceContext, setDeviceContext] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -45,7 +46,9 @@ export default function AgentPage() {
     setError(null);
 
     try {
-      const response = await api.agent(trimmed, forceAgent);
+      const response = await api.agent(trimmed, forceAgent, deviceContext ?? undefined);
+      const nextDeviceContext = extractDeviceContext(response);
+      if (nextDeviceContext) setDeviceContext(nextDeviceContext);
       setTurns((t) =>
         t.map((turn, i) => (i === t.length - 1 ? { ...turn, response } : turn)),
       );
@@ -98,7 +101,7 @@ export default function AgentPage() {
           {pending ? (
             <div className="text-muted-foreground flex items-center gap-2 text-sm">
               <Loader2 className="size-3.5 animate-spin" />
-              Planning and calling tools…
+              Checking approved sources…
             </div>
           ) : null}
 
@@ -112,6 +115,19 @@ export default function AgentPage() {
         </div>
 
         <div className="border-border/60 bg-card/40 mb-6 rounded-lg border p-2 backdrop-blur-xl">
+          {deviceContext ? (
+            <div className="bg-primary/8 text-muted-foreground mb-2 flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[11px]">
+              <span>Current device: {deviceContext}</span>
+              <button
+                type="button"
+                className="hover:text-foreground"
+                onClick={() => setDeviceContext(null)}
+                aria-label="Clear current device"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : null}
           <Textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -151,6 +167,19 @@ export default function AgentPage() {
       </div>
     </AppShell>
   );
+}
+
+function extractDeviceContext(response: AgentResponse): string | null {
+  const content = response.tool_calls.at(-1)?.content;
+  if (!content) return null;
+  const match = /Columns:\s*([^\n]+)\n([^\n]+)/.exec(content);
+  if (!match) return null;
+  const columns = match[1].split("|").map((value) => value.trim().toLowerCase());
+  const values = match[2].split("|").map((value) => value.trim());
+  const deviceId = values[columns.indexOf("device_id")];
+  const deviceName = values[columns.indexOf("device_name")];
+  if (!deviceId || !deviceName) return null;
+  return `${deviceName} (device ID ${deviceId})`;
 }
 
 function EmptyState() {

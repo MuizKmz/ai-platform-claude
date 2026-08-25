@@ -142,10 +142,10 @@ export const api = {
    * this is not more expensive than /v1/chat for a single-source question —
    * `routed_directly` in the response says which path was taken.
    */
-  agent: (question: string, forceAgent = false) =>
+  agent: (question: string, forceAgent = false, context?: string) =>
     request<AgentResponse>("/v1/agent", {
       method: "POST",
-      body: JSON.stringify({ question, force_agent: forceAgent }),
+      body: JSON.stringify({ question, context: context ?? null, force_agent: forceAgent }),
     }),
 
   // --- integrations ---------------------------------------------------------
@@ -177,6 +177,27 @@ export const api = {
     request<IntegrationTestResult>(`/v1/integrations/${id}/test`, {
       method: "POST",
     }),
+
+  // --- training -------------------------------------------------------------
+  // Admin-only. A training response is repository-derived reference material,
+  // not a credential and not an automatic permission grant.
+
+  training: () => request<TrainingRecord[]>("/v1/training"),
+
+  createTraining: (body: TrainingCreate) =>
+    request<TrainingRecord>("/v1/training", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  submitTraining: (id: string, profile: Record<string, unknown>) =>
+    request<TrainingRecord>(`/v1/training/${id}/submit`, {
+      method: "POST",
+      body: JSON.stringify({ profile }),
+    }),
+
+  activateTraining: (id: string) =>
+    request<TrainingRecord>(`/v1/training/${id}/activate`, { method: "POST" }),
 
   // --- users ----------------------------------------------------------------
   // Admin-only. `allowed_labels` is the permission set retrieval filters on, so
@@ -408,6 +429,35 @@ export interface IntegrationTestResult {
    *  driver messages on purpose. */
   error: string | null;
   duration_ms: number;
+}
+
+export interface TrainingCreate {
+  connector_id: string;
+  system_type: "iot" | "mes" | "erp" | "wms" | "other";
+  environment: "test" | "staging" | "production";
+  repository_ref?: string | null;
+  data_classification: "internal" | "confidential" | "restricted";
+  description?: string | null;
+}
+
+export interface TrainingRecord {
+  id: string;
+  connector_id: string;
+  integration_name: string;
+  integration_kind: string;
+  system_type: string;
+  environment: string;
+  repository_ref: string | null;
+  data_classification: string;
+  description: string | null;
+  status: "prompt_ready" | "review_required" | "active" | "superseded";
+  generated_prompt: string;
+  submitted_profile: Record<string, unknown> | null;
+  submitted_at: string | null;
+  reviewed_by_email: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Approval {

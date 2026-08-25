@@ -58,6 +58,11 @@ const KINDS = [
   { value: "rest", label: "REST API (GET only)" },
 ] as const;
 
+const SQL_ENGINES = [
+  { value: "postgres", label: "PostgreSQL" },
+  { value: "mysql", label: "MySQL / MariaDB" },
+] as const;
+
 export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props) {
   const editing = Boolean(existing);
 
@@ -72,6 +77,7 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
   const s = (existing?.settings ?? {}) as Record<string, unknown>;
   const [host, setHost] = useState(String(s.host ?? ""));
   const [port, setPort] = useState(String(s.port ?? "5432"));
+  const [engine, setEngine] = useState(String(s.engine ?? "postgres"));
   const [database, setDatabase] = useState(String(s.database ?? ""));
   const [username, setUsername] = useState(String(s.username ?? ""));
   const [schemaName, setSchemaName] = useState(String(s.schema_name ?? "curated"));
@@ -82,6 +88,7 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
   function buildSettings(): Record<string, unknown> {
     if (kind === "sql") {
       return {
+        engine,
         host,
         // A blank field makes Number("") NaN, and JSON.stringify writes NaN
         // as a bare literal — invalid JSON, which the server rejects as a 400
@@ -213,6 +220,20 @@ export function IntegrationForm({ open, onOpenChange, existing, onSaved }: Props
 
           {kind === "sql" ? (
             <>
+              <Field label="Database engine" htmlFor="engine">
+                <Select value={engine} onValueChange={setEngine}>
+                  <SelectTrigger id="engine">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SQL_ENGINES.map((sqlEngine) => (
+                      <SelectItem key={sqlEngine.value} value={sqlEngine.value}>
+                        {sqlEngine.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
                   <Field label="Host" htmlFor="host">

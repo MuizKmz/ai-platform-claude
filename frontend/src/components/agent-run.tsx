@@ -37,10 +37,13 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
   ).length;
   const invented = response.tool_calls.filter((c) => c.unknown_tool).length;
   const repeats = response.tool_calls.filter((c) => c.cached).length;
+  const directResult = directResultSummary(response);
 
   return (
     <div className="space-y-3">
-      {response.answer ? (
+      {directResult ? (
+        <DirectResultCard result={directResult} />
+      ) : response.answer ? (
         <div className="bg-card/60 border-border/60 rounded-lg border px-3.5 py-2.5">
           <p className="text-sm leading-relaxed whitespace-pre-wrap">
             {response.answer}
@@ -62,11 +65,16 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
       )}
 
       {response.tool_calls.length > 0 ? (
-        <ul className="space-y-1.5">
-          {response.tool_calls.map((call, i) => (
-            <ToolCallCard key={i} call={call} index={i + 1} />
-          ))}
-        </ul>
+        <details className="group">
+          <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs">
+            View source and SQL details
+          </summary>
+          <ul className="mt-2 space-y-1.5">
+            {response.tool_calls.map((call, i) => (
+              <ToolCallCard key={i} call={call} index={i + 1} />
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       <div className="text-muted-foreground/70 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px]">
@@ -76,7 +84,7 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
           <Badge
             variant="outline"
             className="h-4 px-1.5 font-mono text-[10px] font-normal"
-            title="Answered without the agent — no planning call was made"
+            title="Answered through the direct path — no planning call was made"
           >
             routed
           </Badge>
@@ -115,6 +123,56 @@ export function AgentRunView({ response }: { response: AgentResponse }) {
           {response.trace_id.slice(0, 8)}
         </Badge>
       </div>
+    </div>
+  );
+}
+
+function directResultSummary(response: AgentResponse): { label: string; value: string; detail: string } | null {
+  if (!response.routed_directly || response.tool_calls.length !== 1) return null;
+  const call = response.tool_calls[0];
+  if (call.error) return null;
+  const match = /Columns:\s*([^\n]+)\n([^\n]+)/.exec(call.content);
+  if (!match) return null;
+  const columns = match[1].split("|").map((value) => value.trim());
+  const values = match[2].split("|").map((value) => value.trim());
+  if (columns.length !== values.length || values.length === 0) return null;
+  const firstColumn = columns[0].replaceAll("_", " ");
+  const firstValue = values[0];
+  const deviceId = values[columns.indexOf("device_id")];
+  const deviceName = values[columns.indexOf("device_name")];
+  const status = values[columns.indexOf("status")];
+  if (deviceId && deviceName && status) {
+    return {
+      label: `${status.charAt(0).toUpperCase()}${status.slice(1)} Device`,
+      value: deviceName,
+      detail: `Device ID ${deviceId} \u00b7 Live status`,
+    };
+  }
+  const numeric = Number(firstValue);
+  const value = Number.isFinite(numeric) && firstValue.includes(".") ? numeric.toFixed(2) : firstValue;
+  const isTemperature = /temperature|condition/i.test(firstColumn) && /metric = 'temperature'/i.test(call.content);
+  const label = firstColumn.replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const detail = isTemperature
+    ? `Temperature \u00b7 ${temperatureWindow(response.question)}`
+    : response.question.toLowerCase().includes("online")
+      ? "Live device status"
+      : "Live IoT data";
+  return { label, value: isTemperature ? `${value}°C` : value, detail };
+}
+
+function temperatureWindow(question: string): string {
+  const relative = /\b(?:last|past)\s+(\d+)\s+(hours?|days?)\b/i.exec(question);
+  if (relative) return `last ${relative[1]} ${relative[2].toLowerCase()}`;
+  if (/\btoday\b/i.test(question)) return "today";
+  return "all available readings";
+}
+
+function DirectResultCard({ result }: { result: { label: string; value: string; detail: string } }) {
+  return (
+    <div className="border-primary/25 bg-card/70 rounded-xl border px-4 py-3.5">
+      <p className="text-muted-foreground text-xs">{result.label}</p>
+      <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">{result.value}</p>
+      <p className="text-muted-foreground mt-1 text-xs">{result.detail}</p>
     </div>
   );
 }
