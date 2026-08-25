@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from time import perf_counter
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, SecretStr
@@ -31,9 +32,11 @@ from app.agent.graph import run_agent
 from app.agent.limits import RunLimits
 from app.api.deps import CurrentPrincipal, LLMLimited, TenantDB
 from app.connectors.base import ConnectorError
+from app.connectors.credentials import CredentialError, decrypt
 from app.connectors.egress import EgressBlockedError, EgressPolicy
+from app.connectors.registry_store import build_connector
 from app.connectors.sql.connector import SQLConnector, SQLConnectorConfig
-from app.connectors.sql.semantic_layer import ANALYTICS_SEMANTICS
+from app.connectors.sql.semantic_layer import ANALYTICS_SEMANTICS, from_discovered_schema
 from app.core.config import settings
 from app.core.quota import record_spend
 from app.core.security import Principal
@@ -61,6 +64,10 @@ def get_llm() -> LLMProvider:
 
 class AgentRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
+    # Browser-held context from the immediately preceding visible result. It is
+    # reference text only, never authority: tool invocation still re-checks the
+    # caller and the database role still restricts the query.
+    context: str | None = Field(default=None, max_length=1000)
     # Opt out of routing when you want to see the agent work on a simple
     # question — useful for evaluation, and honest about the cost.
     force_agent: bool = False
@@ -121,6 +128,32 @@ _MULTI_STEP = re.compile(
     re.IGNORECASE,
 )
 
+# Questions about operational state are usually database-shaped even when they
+# have only one clause. Sending "Which devices are offline?" to document RAG
+# first cannot answer it and makes a connected system look unavailable.
+#
+# "average" originally stood alone as the only aggregate in this list, which is
+# why "what is the maximum" fell through to document RAG right after "what is
+# the minimum" worked — that one matched on "device", not "minimum". Keep the
+# aggregate/superlative vocabulary together and complete rather than adding
+# words one bug report at a time.
+_DATA_SHAPE = re.compile(
+    r"\b(how many|count|total|average|mean|median|sum|min(?:imum)?|max(?:imum)?|"
+    r"peak|highest|lowest|smallest|largest|biggest|range|current(?:ly)?|latest|"
+    r"offline|online|alert(?:s)?|metric(?:s)?|device(?:s)?|reading(?:s)?|"
+    r"schedule|production|oee|downtime|output|status)\b",
+    re.IGNORECASE,
+)
+
+# A relative time window nearly always means live operational data.  The noun
+# may be a customer-specific term learned through Training ("server room
+# condition"), so routing must not depend on recognising that noun in advance.
+_TIME_WINDOW = re.compile(
+    r"\b(?:last|past|previous|next)\s+\d+\s+"
+    r"(?:minute|hour|day|week|month|year)s?\b|\b(?:today|yesterday)\b",
+    re.IGNORECASE,
+)
+
 
 def needs_agent(question: str) -> bool:
     """Whether a question plausibly needs more than one tool.
@@ -129,7 +162,115 @@ def needs_agent(question: str) -> bool:
     direction: the agent is a fallback the caller can force, and the failure
     mode of over-routing is spending twice as much on every trivial question.
     """
-    return bool(_MULTI_STEP.search(question)) or question.count("?") > 1
+    return (
+        bool(_MULTI_STEP.search(question))
+        or bool(_DATA_SHAPE.search(question))
+        or bool(_TIME_WINDOW.search(question))
+        or question.count("?") > 1
+    )
+
+
+def _stored_tool_name(slug: str, connector_id: object, names: set[str]) -> str:
+    """Create a stable, model-callable name without trusting a display slug."""
+    safe_slug = re.sub(r"[^a-z0-9_]+", "_", slug.lower()).strip("_") or "database"
+    name = f"query_{safe_slug}"
+    if name not in names:
+        return name
+    return f"{name}_{str(connector_id).replace('-', '')[:8]}"
+
+
+def _register_stored_sql_tools(
+    registry: ToolRegistry, session: Session, principal: Principal, llm: LLMProvider
+) -> None:
+    """Expose enabled, tested SQL connectors as schema-aware Agent tools.
+
+    Connector rows are tenant-scoped by the request session's RLS context. We
+    also filter by the caller's labels *before* decrypting credentials or opening
+    a network connection, so an unauthorized caller cannot make the platform
+    probe an integration they are not entitled to use.
+    """
+    rows = session.execute(
+        text("""
+            SELECT c.id, c.slug, c.display_name, c.required_labels, c.settings, c.credential,
+                   (
+                     SELECT t.submitted_profile
+                     FROM training_record t
+                     WHERE t.connector_id = c.id AND t.status = 'active'
+                     ORDER BY t.reviewed_at DESC NULLS LAST
+                     LIMIT 1
+                   ) AS reviewed_training
+            FROM connector c
+            WHERE kind = 'sql'
+              AND enabled = true
+              AND credential IS NOT NULL
+              AND last_test_ok = true
+            ORDER BY created_at
+        """)
+    ).mappings()
+    names: set[str] = set()
+
+    for row in rows:
+        labels = tuple(row["required_labels"] or ())
+        if not labels or not set(labels) & set(principal.allowed_labels):
+            continue
+
+        try:
+            connector = build_connector(
+                kind="sql",
+                slug=str(row["slug"]),
+                display_name=str(row["display_name"]),
+                settings=dict(row["settings"] or {}),
+                required_labels=labels,
+                credential=decrypt(str(row["credential"])),
+            )
+            if not isinstance(connector, SQLConnector):
+                continue
+            discovered = connector.describe_schema(principal)
+        except (CredentialError, ConnectorError, EgressBlockedError, OSError, ValueError) as exc:
+            logger.warning(
+                "stored SQL connector unavailable: tenant=%s slug=%s error=%s",
+                principal.tenant_id,
+                row["slug"],
+                type(exc).__name__,
+            )
+            continue
+        except Exception:  # noqa: BLE001 - database drivers raise several implementation types
+            logger.exception(
+                "stored SQL connector schema discovery failed: tenant=%s slug=%s",
+                principal.tenant_id,
+                row["slug"],
+            )
+            continue
+
+        reviewed_training = row["reviewed_training"]
+        semantics = from_discovered_schema(
+            discovered,
+            connector_name=connector.info.display_name,
+            reviewed_training=dict(reviewed_training)
+            if isinstance(reviewed_training, dict)
+            else None,
+        )
+        if not semantics.views:
+            logger.warning(
+                "stored SQL connector has no discoverable approved views: tenant=%s slug=%s",
+                principal.tenant_id,
+                row["slug"],
+            )
+            continue
+
+        tool_name = _stored_tool_name(str(row["slug"]), row["id"], names)
+        names.add(tool_name)
+        registry.register(
+            principal.tenant_id,
+            QueryDatabaseTool(
+                session,
+                connector,
+                semantics,
+                llm,
+                labels,
+                tool_name=tool_name,
+            ),
+        )
 
 
 def build_registry(session: Session, principal: Principal, llm: LLMProvider) -> ToolRegistry:
@@ -149,6 +290,11 @@ def build_registry(session: Session, principal: Principal, llm: LLMProvider) -> 
         principal.tenant_id,
         SearchKnowledgeTool(session, get_embedding_provider(), ("public",)),
     )
+
+    # Stored integrations are operated through the console. Their approved
+    # views are discovered per request, so a newly connected database becomes
+    # available to authorized callers without a redeploy or hardcoded schema.
+    _register_stored_sql_tools(registry, session, principal, llm)
 
     # Write tools, if any are enabled. Usually none: ENABLED_WRITE_TOOLS is
     # empty by default, so this loop registers nothing and the agent has no way
@@ -214,17 +360,35 @@ def ask_agent(
     """Answer a question, choosing tools as needed."""
     llm = get_llm()
     trace_id = new_trace_id()
+    question = _question_with_context(request.question, request.context)
 
-    if not request.force_agent and not needs_agent(request.question):
+    if not request.force_agent and not needs_agent(question):
         # Routed to grounded generation. The agent is not free, and a question
         # with one obvious source does not need a planning call to discover it.
-        return _answer_directly(db, principal, request.question, llm, trace_id)
+        return _answer_directly(db, principal, question, llm, trace_id)
 
     registry = build_registry(db, principal, llm)
 
+    # One live-data source is not an agent problem. Letting the planner choose
+    # the only authorized SQL tool adds an LLM round trip and can produce
+    # repeated rephrased calls without improving the query.
+    if (
+        not request.force_agent
+        and not _MULTI_STEP.search(question)
+        and (tool_name := _single_database_tool(registry, principal))
+    ):
+        return _answer_from_one_database(
+            db,
+            principal,
+            question,
+            registry,
+            tool_name,
+            trace_id,
+        )
+
     with trace(db, "agent.run", tenant_id=principal.tenant_id, trace_id=trace_id) as span:
         run = run_agent(
-            request.question,
+            question,
             principal=principal,
             registry=registry,
             llm=llm,
@@ -298,6 +462,138 @@ def ask_agent(
         routed_directly=False,
         available_tools=[spec.name for spec in registry.available_to(principal)],
     )
+
+
+def _single_database_tool(registry: ToolRegistry, principal: Principal) -> str | None:
+    """The one database tool a caller can invoke, if there is exactly one."""
+    names = [
+        spec.name
+        for spec in registry.available_to(principal)
+        if isinstance(registry.get_registered(principal.tenant_id, spec.name), QueryDatabaseTool)
+    ]
+    return names[0] if len(names) == 1 else None
+
+
+def _answer_from_one_database(
+    db: Session,
+    principal: Principal,
+    question: str,
+    registry: ToolRegistry,
+    tool_name: str,
+    trace_id: str,
+) -> AgentResponse:
+    """Run one authorized SQL tool without paying for a separate planner call."""
+    started = perf_counter()
+    result = registry.invoke(principal, tool_name, question=question)
+    duration_ms = (perf_counter() - started) * 1000
+    answer = _summarize_direct_database_result(question, result.content, result.error)
+    raw_cost = result.metadata.get("cost_usd", 0.0)
+    cost_usd = float(raw_cost) if isinstance(raw_cost, int | float) else 0.0
+    if cost_usd > 0:
+        record_spend(principal.tenant_id, cost_usd)
+    _record_run(
+        db,
+        principal=principal,
+        thread_id=str(uuid.uuid4()),
+        question=question,
+        answer=answer,
+        halted_reason=None,
+        steps=0,
+        tool_call_count=1,
+        denied_tool_calls=0,
+        cost_usd=cost_usd,
+        routed_directly=True,
+        trace_id=trace_id,
+    )
+    return AgentResponse(
+        question=question,
+        answer=answer,
+        halted_reason=None,
+        tool_calls=[
+            ToolCallOut(
+                tool=tool_name,
+                arguments={"question": question},
+                content=result.content,
+                error=result.error,
+                duration_ms=round(duration_ms, 2),
+                denied=False,
+                cached=False,
+                unknown_tool=False,
+            )
+        ],
+        steps=0,
+        cost_usd=round(cost_usd, 6),
+        trace_id=trace_id,
+        routed_directly=True,
+        available_tools=[spec.name for spec in registry.available_to(principal)],
+    )
+
+
+# Explicit back-references ("that device", "it", "that one") and bare
+# elliptical follow-ups ("what is the maximum", "and the median?") that name no
+# subject of their own. Both mean "still talking about the previous result" —
+# the second is the more common phrasing in practice, and treating it as if it
+# named nothing pushed "what is the maximum" past the device-context injection
+# below and, before _DATA_SHAPE learned "maximum", off the agent path entirely.
+_FOLLOW_UP_REFERENCE = re.compile(r"\b(?:that|this)\s+(?:device|one)\b|\bit\b", re.IGNORECASE)
+_FOLLOW_UP_NO_SUBJECT = re.compile(
+    r"^(?:what(?:'s| is)|and|how about|what about)\b.*\b"
+    r"(?:min(?:imum)?|max(?:imum)?|average|mean|median|peak|highest|lowest|"
+    r"latest|current(?:ly)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _question_with_context(question: str, context: str | None) -> str:
+    """Keep a bounded visible follow-up reference with the current request."""
+    if not context or not (
+        _FOLLOW_UP_REFERENCE.search(question) or _FOLLOW_UP_NO_SUBJECT.search(question)
+    ):
+        return question
+    return (
+        f"{question}\n\n## Previous device context\n"
+        "This request is a follow-up to the previous result below. Unless the "
+        "question names a different subject, use this device ID when filtering "
+        f"metrics: {context.strip()}"
+    )
+
+
+_TOOL_RESULT_ROWS = re.compile(r"Columns:\s*(?P<columns>[^\n]+)\n(?P<values>[^\n]+)")
+
+
+def _summarize_direct_database_result(question: str, content: str, error: str | None) -> str:
+    """Give a readable deterministic summary without another expensive model call.
+
+    The tool card still carries the SQL and exact database value. This summary
+    only reformats a single returned row; it does not interpret, calculate, or
+    conceal anything.
+    """
+    if error:
+        return "Live data could not answer that question. Review the tool result below."
+    match = _TOOL_RESULT_ROWS.search(content)
+    if match is None:
+        return "Live IoT data was retrieved. Review the executed SQL and returned values below."
+    columns = [column.strip().replace("_", " ") for column in match.group("columns").split("|")]
+    values = [value.strip() for value in match.group("values").split("|")]
+    if len(columns) != len(values) or not values:
+        return "Live IoT data was retrieved. Review the executed SQL and returned values below."
+    pairs = ", ".join(
+        f"{column}: {_format_database_value(value)}"
+        for column, value in zip(columns, values, strict=True)
+    )
+    window = (
+        " in the last 24 hours" if _TIME_WINDOW.search(question) else " in the requested period"
+    )
+    return f"Live IoT result{window}: {pairs}."
+
+
+def _format_database_value(value: str) -> str:
+    """Round display-only decimal values; the exact value remains in the tool card."""
+    try:
+        number = float(value)
+    except ValueError:
+        return value
+    return f"{number:.2f}" if "." in value else value
 
 
 def _record_run(
