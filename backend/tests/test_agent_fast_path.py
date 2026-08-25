@@ -41,3 +41,36 @@ def test_a_multi_row_result_is_not_described_as_one() -> None:
     assert "5 rows" in answer
     # The first device must not be presented as the whole answer.
     assert "IOT MQTT MONITORING" not in answer
+
+
+def test_a_query_that_matched_nothing_says_so() -> None:
+    """ "Live IoT data was retrieved" when none was is a lie with a helpful tone.
+
+    Asked for humidity in the server room — which has temperature and voltage
+    sensors and no humidity sensor — the summary said data was retrieved and
+    showed none, leaving the user to hunt for an answer that does not exist.
+    """
+    content = (
+        "SQL: SELECT value AS humidity FROM eaip_curated.v_device_metrics "
+        "WHERE device_id = 'Device-005' AND metric = 'humidity'\n"
+        "\nColumns: humidity\n"
+    )
+
+    answer = _summarize_direct_database_result("what's the humidity there?", content, None)
+
+    assert "matched no data" in answer
+    assert "retrieved" not in answer
+
+
+def test_a_null_aggregate_is_an_absence_not_a_measurement() -> None:
+    """MAX() over no rows is NULL, and "None°C" reads as a reading of None."""
+    content = (
+        "SQL: SELECT MAX(value) AS max_temperature_last_24h FROM eaip_curated.v_device_metrics\n"
+        "\nColumns: max_temperature_last_24h\nNone"
+    )
+
+    answer = _summarize_direct_database_result(
+        "and the maximum in the last 24 hours?", content, None
+    )
+
+    assert "No matching data" in answer

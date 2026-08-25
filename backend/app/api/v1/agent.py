@@ -151,7 +151,14 @@ _DATA_SHAPE = re.compile(
     # right now" matched nothing here, reached no tool, and answered "I don't
     # have enough information" about a device named one turn earlier.
     r"temperature|humidity|voltage|pressure|energy|co2|"
-    r"hot|cold|warm|humid)\b",
+    # Comparatives and superlatives, because people compare things. `\bhot\b`
+    # does not match "hotter" — the same word-boundary miss that made `\bit\b`
+    # skip "its" — so "which is hotter, the office or the server room?" matched
+    # nothing at all and reached no tool. Suffixes are matched rather than
+    # listed so "warmest" and "coldest" do not need discovering one at a time.
+    r"(?:hot|cold|warm|humid|dry|high|low|fast|slow|old|new|busy|noisy)"
+    r"(?:ter|test|er|est)?|"
+    r"compare|versus|\bvs\b|difference between)\b",
     re.IGNORECASE,
 )
 
@@ -600,6 +607,18 @@ def _summarize_direct_database_result(question: str, content: str, error: str | 
         return "Live data could not answer that question. Review the tool result below."
     match = _TOOL_RESULT_ROWS.search(content)
     if match is None:
+        # A query that matched nothing has a Columns: line and no data after
+        # it, so the row pattern fails and this branch is reached. "Live IoT
+        # data was retrieved" is then simply untrue — nothing was — and the
+        # user is left believing the answer is somewhere in the tool card.
+        #
+        # Asked for humidity in the server room, which has only temperature
+        # and voltage sensors, this said data was retrieved and showed none.
+        if "Columns:" in content:
+            return (
+                "That query ran successfully but matched no data. The device or metric "
+                "you asked about may not be recorded here — check the SQL below."
+            )
         return "Live IoT data was retrieved. Review the executed SQL and returned values below."
     columns = [column.strip().replace("_", " ") for column in match.group("columns").split("|")]
     values = [value.strip() for value in match.group("values").split("|")]

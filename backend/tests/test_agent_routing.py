@@ -111,3 +111,35 @@ def test_a_bare_measurement_question_reaches_the_database() -> None:
         "What is the voltage on that device?",
     ):
         assert needs_agent(question), f"{question!r} would not reach a database tool"
+
+
+def test_comparatives_reach_the_database() -> None:
+    """`\bhot\b` does not match "hotter" — the same word-boundary miss that
+    made `\bit\b` skip "its".
+
+    "Which is hotter, the office or the server room?" matched nothing in the
+    routing vocabulary, called zero tools, and answered "I don't have enough
+    information" about two devices it can read every minute. Suffixes are
+    matched rather than listed so "warmest" and "coldest" do not each need
+    discovering by a user first.
+    """
+    for question in (
+        "Which is hotter, the office or the server room?",
+        "Is the office hotter than the server room?",
+        "What is the warmest device?",
+        "Which device is coldest?",
+        "Compare the office and the server room",
+        "office vs server room temperature",
+    ):
+        assert needs_agent(question), f"{question!r} would not reach a database tool"
+
+
+def test_document_questions_still_do_not_route_to_the_database() -> None:
+    """The routing vocabulary earns its keep by being wrong in one direction
+    only. Sending every question to SQL would cost money and answer worse."""
+    for question in (
+        "What is our refund policy?",
+        "Summarise the safety handbook",
+        "Who wrote the maintenance guide?",
+    ):
+        assert not needs_agent(question), f"{question!r} should not need the agent"
