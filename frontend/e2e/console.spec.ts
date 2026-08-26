@@ -196,6 +196,143 @@ test.describe("the agent", () => {
   });
 });
 
+test.describe("the IoT connector, live", () => {
+  /**
+   * Drives the stored SQL connector through the Agent page, against the real
+   * MariaDB reached over the SSH tunnel — the same integration a person tests
+   * by hand. Never stubbed, for the same reason as the rest of this file: the
+   * bugs worth catching here live in the browser round trip, not in a mock
+   * that already agrees with itself.
+   *
+   * Skips cleanly with no E2E_OIDC_USERNAME/PASSWORD set. That is the
+   * ordinary state on a machine with no Keycloak account provisioned for
+   * testing, and a skip here should read as "not configured", not "broken".
+   *
+   * Depends on state outside this repository: the SSH tunnel must be up and
+   * the `iot-test` connector must exist with `last_test_ok = true`, or every
+   * test below fails for a reason this file cannot fix.
+   */
+  test.skip(
+    !process.env.E2E_OIDC_USERNAME || !process.env.E2E_OIDC_PASSWORD,
+    "E2E_OIDC_USERNAME / E2E_OIDC_PASSWORD not set — see e2e/helpers.ts",
+  );
+
+  test("a live device count reaches the agent tool, not just documents", async ({ page }) => {
+    await signIn(page, "");
+    await page.goto("/agent");
+
+    await page.getByPlaceholder(/ask something/i).fill("How many devices do we have?");
+    await page.keyboard.press("Enter");
+
+    // query_iot_test, not search_knowledge alone. Found by hand on 2026-08-25:
+    // a dropped tunnel silently skips the connector and the agent falls back
+    // to documents, answering "not available in the provided documents" —
+    // true, useless, and indistinguishable from a permissions problem. If the
+    // tunnel is down, THIS is the assertion that fails, which is the point.
+    //
+    // Matched on the always-visible tool summary line, not the tool-call
+    // trace: that detail lives inside a collapsed <details>, hidden until a
+    // reader opens "View source and SQL details" — a locator on it times out
+    // as "hidden" even though the run genuinely used the tool.
+    await expect(page.getByTitle("Tools available to you for this run")).toContainText(/query_iot_test/, { timeout: 30_000 });
+  });
+
+  test("the answer names the integration when it works, or says it could not be reached", async ({
+    page,
+  }) => {
+    await signIn(page, "");
+    await page.goto("/agent");
+
+    // Deliberately not asserting which branch fires — this test only proves
+    // BOTH are reachable code paths from the browser, not that the tunnel is
+    // up or down right now, which this file does not control. The unit
+    // version (test_an_unreachable_connector_is_named_in_the_answer, backend
+    // suite) pins the warning text without depending on network state; this
+    // one proves the wiring from question to screen actually works.
+    await page.getByPlaceholder(/ask something/i).fill("How many devices do we have?");
+    await page.keyboard.press("Enter");
+
+    const usedTheTool = page.getByTitle("Tools available to you for this run").filter({
+      hasText: "query_iot_test",
+    });
+    const wasUnreachable = page.getByText(/could not be reached/i);
+    await expect(usedTheTool.or(wasUnreachable).first()).toBeVisible({ timeout: 30_000 });
+  });
+
+  test("the tool-call trace shows the SQL that ran", async ({ page }) => {
+    await signIn(page, "");
+    await page.goto("/agent");
+
+    await page.getByPlaceholder(/ask something/i).fill("How many devices do we have?");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTitle("Tools available to you for this run")).toContainText(/query_iot_test/, { timeout: 30_000 });
+
+    // The SQL and row count sit behind TWO disclosures by design (see the
+    // "Console: the answer first" commit) — an answer whose query is hidden
+    // presents a guess as a fact, so it stays reachable rather than gone, but
+    // not open by default. The outer <details> reveals the tool-call row; the
+    // SQL itself is behind that row's own toggle button.
+    await page.getByText(/view source and sql details/i).click();
+    await page.getByRole("button", { name: /query_iot_test/ }).click();
+    await expect(page.getByText(/SELECT/i).first()).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("a follow-up keeps the device in view", async ({ page }) => {
+    await signIn(page, "");
+    await page.goto("/agent");
+
+    // Found running this test: with no prior turn, "the online one" fell
+    // through the device-status template (its pattern required the literal
+    // word "device(s)") to the LLM, whose answer then depended on the run —
+    // 10 identical live calls split roughly 3 succeeding to 7 refusing. Fixed
+    // in the template, not the prompt: "the STATUS one(s)" is now recognised
+    // the same way "which devices" is, so this now runs at zero cost and
+    // never touches the flaky path. Kept as a two-turn sequence anyway
+    // because it is also the realistic shape of a conversation.
+    await page.getByPlaceholder(/ask something/i).fill("Which devices are offline?");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText(/5 results|offline/i).first()).toBeVisible({ timeout: 30_000 });
+
+    // The bug this pins: that LIST answer used to silently become "the
+    // current device", so the very next question answered confidently about
+    // a device nobody had asked about. Only a single-row result may set
+    // context now — so this question must still name its own subject.
+    await page.getByPlaceholder(/ask something/i).fill("What about the online one?");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText(/SERVER ROOM UNIT/i).first()).toBeVisible({ timeout: 30_000 });
+
+    await page.getByPlaceholder(/ask something/i).fill("What's its temperature right now?");
+    await page.keyboard.press("Enter");
+    // The number is real and moves; the device the number is ABOUT must not.
+    // Checked against the context chip specifically, not "this name appears
+    // nowhere on the page" — turn one's offline list legitimately contains
+    // other device names in its own (collapsed) history, and that is correct
+    // history, not a context leak.
+    await expect(page.getByText(/°C/).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/current device:\s*server room unit/i)).toBeVisible();
+  });
+
+  test("an unanswerable question refuses rather than inventing a number", async ({ page }) => {
+    await signIn(page, "");
+    await page.goto("/agent");
+
+    // The one the runbook names explicitly: oee_device_config LOOKS populated
+    // enough to answer, and the counters that would make it true stopped in
+    // June. A number here would be a confident lie about a headline
+    // manufacturing metric.
+    await page
+      .getByPlaceholder(/ask something/i)
+      .fill("What is our OEE for last week?");
+    await page.keyboard.press("Enter");
+
+    await expect(
+      page
+        .getByText(/could not answer|could not be answered|cannot be answered|unable to answer/i)
+        .first(),
+    ).toBeVisible({ timeout: 30_000 });
+  });
+});
+
 test.describe("accessibility", () => {
   /**
    * The roadmap asks for an accessibility check on the primary flows. This is
