@@ -30,6 +30,62 @@ export function issueToken(tenantSlug: string, email: string): string {
 }
 
 /**
+ * One Keycloak account this suite is allowed to drive.
+ *
+ * `username` and `email` are not secrets — they identify a fixture account
+ * that exists only in a Keycloak realm meant for this, and are fine as
+ * literals. `passwordEnvVar` names the environment variable holding the
+ * password, never the password itself, so this file can never become a place
+ * a credential is checked into git.
+ */
+export interface OidcAccount {
+  username: string;
+  email: string;
+  passwordEnvVar: string;
+}
+
+/**
+ * The two roles the suite's Keycloak fixtures cover — see
+ * infra/keycloak/README.md's "creating test accounts" section for how these
+ * were provisioned, including why the admin account is named `-admin2` (a
+ * first attempt hit an unexplained per-account login failure; deleting and
+ * recreating it, rather than continuing to chase a throwaway credential,
+ * was the faster fix). A test that needs a role beyond these two should get
+ * its own dedicated account rather than repurposing one of these, so a
+ * change made for one test's sake cannot silently affect another's.
+ */
+export const OIDC_ADMIN: OidcAccount = {
+  username: "eaip-e2e-admin2",
+  email: "eaip-e2e-admin2@acme.test",
+  passwordEnvVar: "E2E_OIDC_ADMIN_PASSWORD",
+};
+export const OIDC_READER: OidcAccount = {
+  username: "eaip-e2e-reader",
+  email: "eaip-e2e-reader@acme.test",
+  passwordEnvVar: "E2E_OIDC_READER_PASSWORD",
+};
+
+/**
+ * A real person's Keycloak account, connected to the live IoT integration
+ * over its SSH tunnel — not a fixture. Used only by "the IoT connector,
+ * live", which needs a connector that has actually been tested against a
+ * real MariaDB, not a label copied onto a synthetic account.
+ *
+ * Both fields read from the environment, unlike `OIDC_ADMIN`/`OIDC_READER`:
+ * those name disposable fixtures meant to be recreated freely by anyone
+ * running this suite, while this names whoever's real account happens to be
+ * wired to the tunnel today — not this file's business to assume, and not
+ * something to hardcode as a specific person's username.
+ */
+export function iotOperatorAccount(): OidcAccount {
+  return {
+    username: process.env.E2E_OIDC_USERNAME ?? "",
+    email: "",
+    passwordEnvVar: "E2E_OIDC_PASSWORD",
+  };
+}
+
+/**
  * Sign in through the real login form.
  *
  * Deliberately not by writing sessionStorage directly. The login page validates
@@ -43,12 +99,17 @@ export function issueToken(tenantSlug: string, email: string): string {
  * frontend is actually serving, by design (see playwright.config.ts), so it
  * detects which one is live rather than assuming the development form.
  *
- * `token` is only used on the paste-a-token path. It is still required so a
- * caller cannot forget it and get a silently-skipped assertion; pass any
- * non-empty string when Keycloak is configured and the OIDC flow — not
- * implemented here — is what needs testing instead.
+ * `token` is only used on the paste-a-token path — pass the result of
+ * `issueToken()`. `account` selects which Keycloak identity to use on the
+ * provider path; defaults to `OIDC_ADMIN` because most of this suite's
+ * existing calls were written against an admin token and migrating them
+ * should not also require touching every call site's arguments.
  */
-export async function signIn(page: Page, token: string): Promise<void> {
+export async function signIn(
+  page: Page,
+  token: string,
+  account: OidcAccount = OIDC_ADMIN,
+): Promise<void> {
   await page.goto("/login");
 
   const tokenField = page.getByLabel(/token/i);
@@ -66,7 +127,7 @@ export async function signIn(page: Page, token: string): Promise<void> {
   ]);
 
   if (outcome === "provider") {
-    await signInViaProvider(page, providerButton);
+    await signInViaProvider(page, providerButton, account);
     return;
   }
 
@@ -77,26 +138,24 @@ export async function signIn(page: Page, token: string): Promise<void> {
 
 /**
  * Drive the Keycloak redirect flow: click through, fill its real login page,
- * and land back on the console. Credentials come from the environment only —
- * never a literal in this file — so a test file can never become a place a
- * password is checked into git.
+ * and land back on the console.
  *
- * Set E2E_OIDC_USERNAME and E2E_OIDC_PASSWORD to exercise this path. Tests
- * that need it should skip cleanly when they are unset, the same way the
+ * Set the environment variables named by `account` to exercise this path.
+ * Tests using it should skip cleanly when they are unset, the same way the
  * database-backed backend tests skip when Docker is not up — a missing
  * credential is an environment fact, not a failure.
  */
 async function signInViaProvider(
   page: Page,
   providerButton: ReturnType<Page["getByRole"]>,
+  account: OidcAccount,
 ): Promise<void> {
-  const username = process.env.E2E_OIDC_USERNAME;
-  const password = process.env.E2E_OIDC_PASSWORD;
-  if (!username || !password) {
+  const password = process.env[account.passwordEnvVar];
+  if (!password) {
     throw new Error(
-      "This deployment has an identity provider configured. Set " +
-        "E2E_OIDC_USERNAME and E2E_OIDC_PASSWORD to drive the Keycloak login, " +
-        "or point E2E at a build with no identity provider configured.",
+      `This deployment has an identity provider configured. Set ` +
+        `${account.passwordEnvVar} to drive the Keycloak login for ` +
+        `${account.username}, or point E2E at a build with no identity provider configured.`,
     );
   }
 
@@ -112,7 +171,7 @@ async function signInViaProvider(
   // change under a company theme, and do not depend on matching the label
   // text at exactly the moment the accessibility tree is queried.
   await page.locator("#username").waitFor({ state: "visible", timeout: 15_000 });
-  await page.locator("#username").fill(username);
+  await page.locator("#username").fill(account.username);
   await page.locator("#password").fill(password);
   await page.locator("#kc-login").click();
   // Keycloak redirects to /callback, which redeems the code and forwards on.

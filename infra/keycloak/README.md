@@ -148,6 +148,65 @@ needs the same `tenant_id`/`labels` treatment as a user, set on its
 service-account user rather than through a login it never performs, and its
 tokens carry `eaip-api-mcp` as the audience, not `eaip-api`.
 
+## Creating test accounts for the E2E suite
+
+`frontend/e2e/console.spec.ts` drives real logins, and once this realm has an
+identity provider configured the console shows Keycloak's redirect rather
+than the paste-a-token form (`frontend/e2e/helpers.ts`'s `signInViaProvider`).
+Two fixture accounts back that: `OIDC_ADMIN` and `OIDC_READER`, defined in
+`helpers.ts` with their usernames and emails as literals — they identify
+fixtures in a realm meant for this, not secrets — and their passwords read
+from `E2E_OIDC_ADMIN_PASSWORD` / `E2E_OIDC_READER_PASSWORD`.
+
+To (re)create them: Users → Add user, same fields as "Creating the first
+admin user" above.
+
+| | `eaip-e2e-admin2` | `eaip-e2e-reader` |
+|---|---|---|
+| Email | `eaip-e2e-admin2@acme.test` | `eaip-e2e-reader@acme.test` |
+| Tenant | whichever tenant `acme`'s slug resolves to | same |
+| Labels | `public`, `finance`, `iot` | `public` |
+| Role | `admin` | `reader` |
+
+**The `2` is not a typo, and worth understanding before renaming it.** A
+first `eaip-e2e-admin` account failed every password login with
+`invalid_user_credentials` for a reason that did not reproduce on a fresh
+account with identical settings — role, labels, and a hex-only password all
+individually ruled out as the cause. Deleting it and creating
+`eaip-e2e-admin2` fresh fixed it immediately. If this happens again: a
+throwaway credential is not worth extended diagnosis, and delete-and-recreate
+is the faster, equally valid fix. (If you rename it back to `eaip-e2e-admin`
+successfully, update `OIDC_ADMIN.username` in `helpers.ts` to match — a
+Keycloak `PUT` on this user's own record failed with 400 when tried
+immediately after creation, for reasons not investigated.)
+
+**One test needs a matching `app_user` row.** `test("an admin cannot delete
+their own account")` depends on the API's own rule — it compares by
+`principal.user_id`, the token's `sub`, not by email — so "your own row" only
+exists if an `app_user` row shares that exact `id`. Find the Keycloak user's
+`id` (Users → the account → its UUID in the URL) and insert it directly:
+
+```sql
+INSERT INTO app_user (id, tenant_id, email, roles, allowed_labels)
+VALUES ('<keycloak user id>', '<acme tenant id>', 'eaip-e2e-admin2@acme.test',
+        ARRAY['admin','reader'], ARRAY['public','finance','iot']);
+```
+
+This is the visible edge of a real gap: EAIP's `app_user` table and
+Keycloak's user directory are two separate stores with no sync between them.
+A person can exist in one and not the other — your own console login almost
+certainly has no `app_user` row today, which is why the Users page not
+listing you is expected, not a bug.
+
+Running the suite:
+
+```powershell
+$env:E2E_OIDC_ADMIN_PASSWORD = "..."
+$env:E2E_OIDC_READER_PASSWORD = "..."
+cd frontend
+npm run e2e
+```
+
 ## Pointing EAIP at it
 
 In `.env`:
