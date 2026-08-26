@@ -197,7 +197,17 @@ _SQL_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]
 _SQL_ALIAS = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _DEVICE_STATUS = re.compile(r"\b(online|offline)\b", re.IGNORECASE)
 _DEVICE_COUNT = re.compile(r"\b(?:how many|count|number of|total)\b", re.IGNORECASE)
-_DEVICE_LIST = re.compile(r"\b(?:what|which|list|show)\b.*\bdevices?\b", re.IGNORECASE)
+# Required the literal word "device(s)" to appear, which "the online one" does
+# not — "one" stands in for it by ellipsis. That gap sent the question to the
+# LLM path, where the same prompt answers or refuses depending on the run: a
+# 10-sample check found roughly 3 in 10 succeeding, both before and after the
+# refusal rules added the same day. The template is what should have answered
+# this deterministically the whole time; "the [status] one(s)" is now
+# recognised as naming a device the same way "which devices" does.
+_DEVICE_LIST = re.compile(
+    r"\b(?:what|which|list|show)\b.*\bdevices?\b|\bthe\s+\w+\s+one(?:s)?\b",
+    re.IGNORECASE,
+)
 
 
 def _run_device_status_template(

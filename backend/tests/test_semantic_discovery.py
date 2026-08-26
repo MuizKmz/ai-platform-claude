@@ -389,3 +389,40 @@ def test_the_status_template_declines_a_superlative() -> None:
         _run_device_status_template(connector, semantics, object(), "How many devices are offline?")
         is not None
     )
+
+
+def test_the_ellipsis_one_is_recognised_as_a_device() -> None:
+    """ "The online one" refers to a device by ellipsis, not by name on record.
+
+    Found writing the Playwright suite: this question has no literal "device"
+    or "devices" in it, so it fell through the template to the LLM path, whose
+    answer depended on the run — 10 live samples split roughly 3 succeeding to
+    7 refusing, on the exact same prompt. The template is what should answer
+    this deterministically; extending its pattern to "the STATUS one(s)" fixed
+    it to 10/10 at zero cost, because it never reaches a model at all.
+    """
+    semantics = from_discovered_schema(
+        [
+            {
+                "name": "curated.v_devices",
+                "columns": [
+                    {"name": "device_id"},
+                    {"name": "device_name"},
+                    {"name": "status"},
+                ],
+            }
+        ],
+        connector_name="IoT",
+    )
+    connector = SimpleNamespace(
+        query=lambda _p, sql: QueryResult(("device_id",), (("Device-005",),), sql, 1, False, 1.0)
+    )
+
+    for phrasing in (
+        "What about the online one?",
+        "the offline ones",
+        "What's the offline one doing?",
+    ):
+        assert _run_device_status_template(connector, semantics, object(), phrasing) is not None, (
+            f"{phrasing!r} should be handled deterministically, not sent to the model"
+        )

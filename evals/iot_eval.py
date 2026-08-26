@@ -212,7 +212,7 @@ def main() -> int:
 
     print(f"{len(semantics.views)} approved views, "
           f"{len(value_hints)} column(s) with value hints, "
-          f"{len(semantics.iot_metric_templates)} reviewed metric template(s), "
+          f"{len(semantics.reviewed_metric_templates)} reviewed metric template(s), "
           f"{'a' if profile else 'NO'} reviewed training profile")
     print()
 
