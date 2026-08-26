@@ -140,6 +140,14 @@ The `tenant_id` must be a tenant that exists in EAIP's database. List them:
 docker exec -it eaip-postgres psql -U $env:POSTGRES_USER -d $env:POSTGRES_DB -c "SELECT id, slug FROM tenant;"
 ```
 
+## Letting an external AI use EAIP over MCP
+
+A separate identity, a separate audience, and a separate document:
+[MCP-SETUP.md](MCP-SETUP.md). The short version — `eaip-mcp`'s service account
+needs the same `tenant_id`/`labels` treatment as a user, set on its
+service-account user rather than through a login it never performs, and its
+tokens carry `eaip-api-mcp` as the audience, not `eaip-api`.
+
 ## Pointing EAIP at it
 
 In `.env`:
