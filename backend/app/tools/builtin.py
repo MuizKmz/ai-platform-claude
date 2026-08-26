@@ -207,9 +207,27 @@ def _run_iot_device_status_template(
     status_match = _DEVICE_STATUS.search(question)
     if status_match is None:
         return None
-    # Do not take over a richer metric question just because it mentions an
-    # online device. Those require the reviewed metric mapping or the SQL model.
-    if re.search(r"\b(?:temperature|metric|average|avg|minimum|min|maximum|max)\b", question, re.I):
+    # Do not take over a richer question just because it mentions a status.
+    #
+    # This template answers exactly two things: how many devices have a status,
+    # and which ones do. Anything asking for MORE than that — a superlative, a
+    # ranking, a time comparison, a metric — must go to the SQL model, which
+    # can express it.
+    #
+    # "Which device has been offline the longest?" matched `_DEVICE_LIST` and
+    # `_DEVICE_STATUS` and came back as all five offline devices. The SQL model,
+    # asked the same question, wrote `ORDER BY last_seen LIMIT 1` and returned
+    # the right one — so the template was not saving a call, it was losing an
+    # answer.
+    if re.search(
+        r"\b(?:temperature|humidity|voltage|pressure|metric|reading|"
+        r"average|avg|min(?:imum)?|max(?:imum)?|sum|total|"
+        r"longest|shortest|oldest|newest|latest|earliest|first|last|"
+        r"most|least|top|bottom|rank|since|before|after|between|"
+        r"when|how long|duration)\b",
+        question,
+        re.I,
+    ):
         return None
     devices_view = next(
         (

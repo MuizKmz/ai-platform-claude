@@ -333,3 +333,56 @@ def test_a_column_is_not_assumed_to_exist_everywhere() -> None:
     )
 
     assert any("only in the views that list it" in note for note in semantics.notes)
+
+
+def test_the_status_template_declines_a_superlative() -> None:
+    """It answers "which are offline", not "which has been offline longest".
+
+    Asked the second, `_DEVICE_LIST` and `_DEVICE_STATUS` both matched and it
+    returned all five offline devices — answering an easier question and
+    presenting it as the answer. The SQL model, given the same question, wrote
+    ORDER BY last_seen LIMIT 1 and got it right, so the template was not saving
+    a call. It was losing an answer.
+    """
+    from app.tools.builtin import _run_iot_device_status_template
+
+    semantics = from_discovered_schema(
+        [
+            {
+                "name": "curated.v_devices",
+                "columns": [
+                    {"name": "device_id"},
+                    {"name": "device_name"},
+                    {"name": "status"},
+                ],
+            }
+        ],
+        connector_name="IoT",
+    )
+    connector = SimpleNamespace(
+        query=lambda _p, sql: QueryResult(("device_id",), (("Device-001",),), sql, 1, False, 1.0)
+    )
+
+    for richer in (
+        "Which device has been offline the longest?",
+        "Which device went offline most recently?",
+        "How long has Device-001 been offline?",
+        "Which offline device has the most readings?",
+    ):
+        assert _run_iot_device_status_template(connector, semantics, object(), richer) is None, (
+            f"the template claimed {richer!r}, which it cannot answer"
+        )
+
+    # The two questions it CAN answer still reach it.
+    assert (
+        _run_iot_device_status_template(
+            connector, semantics, object(), "Which devices are offline?"
+        )
+        is not None
+    )
+    assert (
+        _run_iot_device_status_template(
+            connector, semantics, object(), "How many devices are offline?"
+        )
+        is not None
+    )

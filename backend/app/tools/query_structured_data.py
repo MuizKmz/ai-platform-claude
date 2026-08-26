@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -206,7 +207,20 @@ def _draft_sql(
         ),
         Message(
             role="user",
-            content=f"{semantics.to_prompt()}\n\n## Question\n\n{question}",
+            # Today's date, because the model cannot know it and will otherwise
+            # supply one from its training data. Asked for "the production
+            # schedule for August" it wrote `BETWEEN '2023-08-01' AND
+            # '2023-08-31'` — correct SQL, plausible output, and it silently
+            # matched nothing because the rows are in 2026.
+            #
+            # Relative windows (NOW() - INTERVAL) were unaffected and hid this:
+            # the failure only appears when a question names a month or a year
+            # without one.
+            content=(
+                f"{semantics.to_prompt()}\n\n"
+                f"## Today's date\n\n{date.today().isoformat()}\n\n"
+                f"## Question\n\n{question}"
+            ),
         ),
     ]
     completion = llm.complete(messages, max_tokens=600)

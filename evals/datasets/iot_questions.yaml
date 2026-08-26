@@ -137,6 +137,37 @@
   kind: answerable
   note: Assembly Process and Cold Process.
 
+# --- reasoning that needs more than a filter ------------------------------------
+
+- question: Which device has the most readings?
+  expected_row_count: 1
+  kind: answerable
+  note: Device-002 with 185,024 of 345,551 rows.
+
+- question: How many different metrics do we collect?
+  expected: [[14]]
+  kind: answerable
+
+- question: Show me the production schedule for August
+  expected_row_count: 2
+  kind: answerable
+  note: >-
+    Both rows are 2026-08-18. This failed with "matched no data" because the
+    model wrote BETWEEN '2023-08-01' AND '2023-08-31' — it cannot know the
+    current year and supplied one from training. Relative windows
+    (NOW() - INTERVAL) had always worked, which is why it stayed hidden: the
+    failure needs a question that names a month or year without one.
+
+- question: Which device has been offline the longest?
+  expected_row_count: 1
+  kind: answerable
+  note: >-
+    Machine-001-001, last seen 2026-05-20. Answered with all five offline
+    devices, because the no-LLM status template matched "which" + "offline"
+    and ignored "the longest" — an easier question answered as though it were
+    the one asked. The SQL model gets this right, so the template was losing
+    an answer rather than saving a call.
+
 # --- the honest failures ------------------------------------------------------
 #
 # A system that answers everything is not being honest. These must produce a
