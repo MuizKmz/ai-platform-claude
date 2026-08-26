@@ -233,7 +233,7 @@ def _stored_tool_name(slug: str, connector_id: object, names: set[str]) -> str:
 
 def _register_stored_sql_tools(
     registry: ToolRegistry, session: Session, principal: Principal, llm: LLMProvider
-) -> None:
+) -> list[str]:
     """Expose enabled, tested SQL connectors as schema-aware Agent tools.
 
     Connector rows are tenant-scoped by the request session's RLS context. We
@@ -260,6 +260,10 @@ def _register_stored_sql_tools(
         """)
     ).mappings()
     names: set[str] = set()
+    # Connectors the caller is entitled to use that did not answer. Returned
+    # rather than only logged: a configured integration being unreachable is
+    # the user's answer, not a detail for the server log.
+    unreachable: list[str] = []
 
     for row in rows:
         labels = tuple(row["required_labels"] or ())
@@ -285,6 +289,7 @@ def _register_stored_sql_tools(
                 row["slug"],
                 type(exc).__name__,
             )
+            unreachable.append(str(row["display_name"]))
             continue
         except Exception:  # noqa: BLE001 - database drivers raise several implementation types
             logger.exception(
@@ -330,6 +335,8 @@ def _register_stored_sql_tools(
             ),
         )
 
+    return unreachable
+
 
 def build_registry(session: Session, principal: Principal, llm: LLMProvider) -> ToolRegistry:
     """Tools for one request, bound to this request's session.
@@ -352,7 +359,13 @@ def build_registry(session: Session, principal: Principal, llm: LLMProvider) -> 
     # Stored integrations are operated through the console. Their approved
     # views are discovered per request, so a newly connected database becomes
     # available to authorized callers without a redeploy or hardcoded schema.
-    _register_stored_sql_tools(registry, session, principal, llm)
+    # Recorded on the registry rather than returned, because build_registry is
+    # shared with the MCP server (phase 10's "one chokepoint, two front doors")
+    # and its signature is a contract. A configured integration that did not
+    # answer is the caller's answer, not a line in a log they cannot see.
+    registry.unreachable_connectors = _register_stored_sql_tools(  # type: ignore[attr-defined]
+        registry, session, principal, llm
+    )
 
     # Write tools, if any are enabled. Usually none: ENABLED_WRITE_TOOLS is
     # empty by default, so this loop registers nothing and the agent has no way
@@ -505,7 +518,7 @@ def ask_agent(
 
     return AgentResponse(
         question=run.question,
-        answer=run.answer,
+        answer=_note_unreachable(run.answer, registry),
         halted_reason=run.halted_reason,
         tool_calls=[
             ToolCallOut(
@@ -526,6 +539,33 @@ def ask_agent(
         routed_directly=False,
         available_tools=[spec.name for spec in registry.available_to(principal)],
     )
+
+
+def _note_unreachable(answer: str | None, registry: ToolRegistry) -> str | None:
+    """Say when an integration the caller is entitled to use did not answer.
+
+    Without this, an unreachable connector is invisible: the agent falls back
+    to documents and reports the absence as fact — "not available in the
+    provided documents" — which is true, useless, and indistinguishable from a
+    platform that knows nothing. It sent a real diagnosis to the wrong place
+    three separate times, once to "maybe the user lacks permission".
+
+    Phase 7's rule, finally applied here: a dead connector produces an explicit
+    "I could not reach X", not a hallucinated substitute.
+    """
+    names = getattr(registry, "unreachable_connectors", None)
+    if not names:
+        return answer
+
+    listed = ", ".join(names)
+    warning = (
+        f"NOTE: {listed} could not be reached, so live data from it was not "
+        "consulted. This answer may be incomplete — check the connection before "
+        "relying on it."
+    )
+    if not answer:
+        return warning
+    return warning + "\n\n" + answer
 
 
 def _single_database_tool(registry: ToolRegistry, principal: Principal) -> str | None:

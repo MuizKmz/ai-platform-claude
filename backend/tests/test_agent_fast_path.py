@@ -74,3 +74,40 @@ def test_a_null_aggregate_is_an_absence_not_a_measurement() -> None:
     )
 
     assert "No matching data" in answer
+
+
+def test_an_unreachable_connector_is_named_in_the_answer() -> None:
+    """Silence here cost three wrong diagnoses in one day.
+
+    With the SSH tunnel down, the connector is skipped, the agent answers from
+    documents, and reports the absence as fact: "not available in the provided
+    documents". True, useless, and indistinguishable from a platform that knows
+    nothing — one of those diagnoses was "maybe the user lacks permission".
+
+    Phase 7's rule: a dead connector produces an explicit "I could not reach
+    X", not a hallucinated substitute.
+    """
+    from types import SimpleNamespace
+
+    from app.api.v1.agent import _note_unreachable
+
+    registry = SimpleNamespace(unreachable_connectors=["IoT test MariaDB"])
+    answer = _note_unreachable("The documents do not mention devices.", registry)
+
+    assert answer is not None
+    assert "IoT test MariaDB" in answer
+    assert "could not be reached" in answer
+    # The original answer survives; the warning is added, not substituted.
+    assert "The documents do not mention devices." in answer
+
+
+def test_a_healthy_registry_adds_no_warning() -> None:
+    from types import SimpleNamespace
+
+    from app.api.v1.agent import _note_unreachable
+
+    assert _note_unreachable("42 devices.", SimpleNamespace()) == "42 devices."
+    assert (
+        _note_unreachable("42 devices.", SimpleNamespace(unreachable_connectors=[]))
+        == "42 devices."
+    )
