@@ -220,6 +220,7 @@ def from_discovered_schema(
         "A column exists only in the views that list it. To use a column from "
         "another view, JOIN using a path from the section below.",
     ]
+    notes.extend(_absent_concept_notes(views))
     joins = _infer_joins(views)
     # A repository assistant's response is never used directly.  This is only
     # reached for an administrator-reviewed, activated training record, and we
@@ -242,6 +243,37 @@ def from_discovered_schema(
 # `status` column shared by two views says nothing; a `device_id` shared by two
 # views is the same device in both.
 JOINABLE_KEYS = ("device_id", "asset_id", "machine_id", "equipment_id", "site_id")
+
+
+def _absent_concept_notes(views: list[ViewDoc]) -> list[str]:
+    """Say plainly which concepts this schema cannot answer.
+
+    Rule 7 of the drafting prompt tells the model not to substitute a near
+    column. That was enough for "how much did we spend" — summing an energy
+    metric and calling it money — and not enough for "who was on shift", where
+    `shift_name` contains the very word the question uses.
+
+    A stated absence is harder to argue with than a prohibition.
+    """
+    columns = {column.name.lower() for view in views for column in view.columns}
+    notes: list[str] = []
+
+    person_markers = ("person", "employee", "operator_name", "staff", "technician")
+    if not any(marker in name for name in columns for marker in person_markers):
+        notes.append(
+            "These views identify DEVICES, not people. No column names a person, "
+            "and a shift or process label is a period of time rather than who "
+            "worked it. Any question about who did, saw, approved, or was "
+            "present for something is UNANSWERABLE here."
+        )
+    money_markers = ("cost", "price", "amount", "tariff", "currency")
+    if not any(marker in name for name in columns for marker in money_markers):
+        notes.append(
+            "These views hold MEASUREMENTS, not money. There is no price, tariff, "
+            "or currency anywhere, so questions about spend, cost, or value are "
+            "UNANSWERABLE even where a quantity can be summed."
+        )
+    return notes
 
 
 def _infer_joins(views: list[ViewDoc]) -> tuple[JoinPath, ...]:

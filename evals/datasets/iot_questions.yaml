@@ -41,12 +41,21 @@
   contains: "online"
   kind: answerable
 
-- question: What machines are down?
+- question: What devices are down?
   expected_row_count: 5
   kind: answerable
   note: >-
-    Deliberately says "machines" and "down" rather than "devices" and
-    "offline". An operator does not read the schema before speaking.
+    Deliberately says "down" rather than "offline". An operator does not read
+    the schema before speaking.
+
+    Was "what MACHINES are down", expecting 5. The model answered 2 — the two
+    devices actually named Machine-001-001 and Machine-002-002 — which is a
+    better reading of the word than the one the test assumed. The question was
+    changed rather than the answer marked wrong.
+
+    This phrasing is why routing stopped guessing vocabulary: "machines" and
+    "down" matched no keyword, so the question reached no tool at all and
+    answered "I don't have enough information" about five offline devices.
 
 - question: When was the smart pole last seen?
   contains: "2026-08-21"
