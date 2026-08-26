@@ -54,7 +54,30 @@ def principal_from_mcp_token(token: str) -> Principal:
     parameter on it. A boolean argument that switches audiences is one call site
     away from being passed wrongly, and this is the check that stops a
     console token being used as a machine credential.
+
+    With an identity provider configured (ADR 0009), this delegates to the same
+    RS256-against-JWKS verification the console uses — `principal_from_token`'s
+    OIDC branch — but with the MCP audience instead of the console's. This was
+    missed when Keycloak first landed: `principal_from_mcp_token` kept verifying
+    the local HS256 issuer only, so a real Keycloak service-account token for
+    `eaip-mcp` was refused by the one surface that exists to accept it. Found by
+    calling the running endpoint with one, not by reading the code.
+
+    The import is deferred for the same reason `principal_from_token` defers
+    it: `core.oidc` imports this module's siblings for `Principal` and
+    `AuthError`, and a top-level import here would be a cycle.
     """
+    if settings.oidc_enabled:
+        from app.core.oidc import principal_from_oidc_token
+
+        return principal_from_oidc_token(token, audience=mcp_audience())
+
+    if not settings.local_tokens_allowed:
+        # Same reasoning as principal_from_token's belt-and-braces branch: a
+        # production deployment with no provider configured refuses rather
+        # than falling back to an issuer that checks no credentials.
+        raise AuthError("no identity provider is configured")
+
     try:
         claims = jwt.decode(
             token,

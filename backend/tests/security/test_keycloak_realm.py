@@ -136,10 +136,43 @@ def test_claims_reach_the_access_token_not_only_the_id_token(
 # --- audience separation (RFC 8707, ADR 0007) ---------------------------------
 
 
-def test_the_api_audience_is_issued(identity_scope: dict[str, Any]) -> None:
-    """Without this the aud is the requesting client, and the API's check fails."""
-    mapper = _mappers(identity_scope)["eaip-api-audience"]
-    assert mapper["config"]["included.custom.audience"] == settings.jwt_audience
+def _scope_named(realm: dict[str, Any], name: str) -> dict[str, Any]:
+    for scope in realm["clientScopes"]:
+        if scope["name"] == name:
+            return scope
+    pytest.fail(f"the {name} client scope is missing")
+
+
+def test_the_console_and_mcp_audiences_are_separate_scopes(realm: dict[str, Any]) -> None:
+    """The audience mapper must NOT live in the shared eaip-identity scope.
+
+    It did, briefly, while adding the MCP audience: every client attaching
+    eaip-identity — both eaip-console and eaip-mcp — inherited whatever
+    audience sat inside it. Adding a second audience mapper alongside it would
+    have produced aud: [eaip-api, eaip-api-mcp] on an MCP token, which is
+    exactly the shape ADR 0007 exists to prevent — a token usable on both
+    surfaces is a confused-deputy credential, whichever surface issued it.
+
+    The fix is structural: each audience is its own scope, attached to
+    exactly one client. This test would have caught the wrong version before
+    it reached a running Keycloak.
+    """
+    identity_mappers = {
+        mapper["name"] for mapper in _scope_named(realm, "eaip-identity")["protocolMappers"]
+    }
+    assert not any("audience" in name.lower() for name in identity_mappers), (
+        "an audience mapper in the shared identity scope reaches every client that uses it"
+    )
+
+    console_mapper = _mappers(_scope_named(realm, "eaip-console-audience"))["eaip-api-audience"]
+    mcp_mapper = _mappers(_scope_named(realm, "eaip-mcp-audience"))["eaip-mcp-audience"]
+
+    console_aud = console_mapper["config"]["included.custom.audience"]
+    mcp_aud = mcp_mapper["config"]["included.custom.audience"]
+
+    assert console_aud == settings.jwt_audience
+    assert mcp_aud == f"{settings.jwt_audience}-mcp"
+    assert console_aud != mcp_aud
 
 
 def test_console_and_mcp_are_separate_clients(realm: dict[str, Any]) -> None:
@@ -149,6 +182,22 @@ def test_console_and_mcp_are_separate_clients(realm: dict[str, Any]) -> None:
     assert "eaip-mcp" in clients
     assert clients["eaip-console"]["publicClient"] is True
     assert clients["eaip-mcp"]["publicClient"] is False
+
+
+def test_each_client_carries_only_its_own_audience_scope(realm: dict[str, Any]) -> None:
+    """A client's scope LIST is the actual boundary, not just the mapper's
+    existence — a client attaching both audience scopes would defeat the
+    separation even with the mappers correctly split."""
+    clients = {client["clientId"]: client for client in realm["clients"]}
+
+    console_scopes = set(clients["eaip-console"]["defaultClientScopes"])
+    mcp_scopes = set(clients["eaip-mcp"]["defaultClientScopes"])
+
+    assert "eaip-console-audience" in console_scopes
+    assert "eaip-mcp-audience" not in console_scopes
+
+    assert "eaip-mcp-audience" in mcp_scopes
+    assert "eaip-console-audience" not in mcp_scopes
 
 
 # --- posture ------------------------------------------------------------------

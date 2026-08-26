@@ -140,3 +140,33 @@ so it does not need rewriting.
 
 `Principal` is unchanged by this ADR, and that is the property worth preserving:
 it is why an identity provider could arrive in Phase 11 instead of Phase 1.
+
+## Addendum: MCP did not get the same upgrade the console did
+
+When this ADR shipped, `principal_from_mcp_token` (ADR 0007) was left verifying
+the local HS256 issuer only. That was an oversight, not a decision — found by
+actually calling the running `/mcp` endpoint with a Keycloak service-account
+token and watching it get refused. Two things were missing, not one:
+
+**The audience was wrong before the code was.** The realm's `eaip-api-audience`
+mapper is shared by every client using the `eaip-identity` scope, and it
+hardcodes `eaip-api`. `eaip-mcp` therefore minted tokens addressed to the
+console's audience — exactly the confused-deputy shape ADR 0007 exists to
+prevent, just produced by configuration instead of by a bug. A second client
+scope, `eaip-mcp-audience`, maps to `eaip-api-mcp` (matching `mcp_audience()`)
+and is attached only to `eaip-mcp`.
+
+**A service account is not a person.** `eaip-console` tokens carry a human's
+`tenant_id` and `labels`, set as user attributes at login. A client-credentials
+token represents the `eaip-mcp` *client itself* — there is no user in the flow
+to carry them. Keycloak supports the same attribute mechanism on a client's
+service-account user, so `tenant_id` and `labels` are set there instead,
+exactly as a real user's would be. Deciding what an MCP-connected AI is allowed
+to see is an access-control decision made once, in the realm — not something
+`principal_from_mcp_token` should default or infer.
+
+`principal_from_mcp_token` now branches exactly as `principal_from_token` does:
+`settings.oidc_enabled` picks RS256-against-Keycloak with the MCP audience, or
+falls back to the local HS256 path used by `python -m app.cli token --mcp` for
+development and tests. Same shape, same reasoning, same file it should have
+been added to the first time.
