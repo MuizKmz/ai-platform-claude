@@ -166,7 +166,7 @@ function directResultSummary(response: AgentResponse): DirectResult | null {
     return {
       label: columns[labelIndex].replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
       value: String(rows.length),
-      detail: `${rows.length} results · Live IoT data`,
+      detail: `${rows.length} results · Live data`,
       rows: rows.map((row) => {
         const primary = row[labelIndex];
         const extras = row.filter((_, i) => i !== labelIndex).join(" · ");
@@ -197,17 +197,37 @@ function directResultSummary(response: AgentResponse): DirectResult | null {
   }
   const numeric = Number(firstValue);
   const value = Number.isFinite(numeric) && firstValue.includes(".") ? numeric.toFixed(2) : firstValue;
-  const isTemperature = /temperature|condition/i.test(firstColumn) && /metric = 'temperature'/i.test(call.content);
+  // Which metric this is, read from the SQL rather than assumed. Previously
+  // only `temperature` was recognised and only °C could be shown, so humidity
+  // or voltage rendered as a bare number under a label saying nothing about
+  // what had been measured.
+  const metric = /metric\s*=\s*'([a-z0-9_]+)'/i.exec(call.content)?.[1]?.toLowerCase();
+  const unit = metric ? METRIC_UNITS[metric] : undefined;
   const label = firstColumn.replace(/\b\w/g, (letter) => letter.toUpperCase());
-  const detail = isTemperature
-    ? `Temperature \u00b7 ${temperatureWindow(response.question)}`
+  const detail = metric
+    ? `${metric.replaceAll("_", " ")} · ${measurementWindow(response.question)}`
     : response.question.toLowerCase().includes("online")
       ? "Live device status"
-      : "Live IoT data";
-  return { label, value: isTemperature ? `${value}°C` : value, detail };
+      : "Live data";
+  return { label, value: unit ? `${value}${unit}` : value, detail };
 }
 
-function temperatureWindow(question: string): string {
+/**
+ * Units for the metrics this platform has met. A metric with no entry shows
+ * its bare value: a guessed unit is worse than none, because it reads as a
+ * measured fact rather than an assumption.
+ */
+const METRIC_UNITS: Record<string, string> = {
+  temperature: "°C",
+  humidity: "%",
+  voltage: "V",
+  bus_voltage: "V",
+  pressure: " hPa",
+  energy: " kWh",
+  co2: " ppm",
+};
+
+function measurementWindow(question: string): string {
   const relative = /\b(?:last|past)\s+(\d+)\s+(hours?|days?)\b/i.exec(question);
   if (relative) return `last ${relative[1]} ${relative[2].toLowerCase()}`;
   if (/\btoday\b/i.test(question)) return "today";

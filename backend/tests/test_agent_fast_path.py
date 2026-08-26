@@ -10,7 +10,7 @@ def test_single_aggregate_is_presented_readably() -> None:
         None,
     )
 
-    assert answer == "Live IoT result in the last 24 hours: average server room condition: 27.38."
+    assert answer == "Live result in the last 24 hours: average server room condition: 27.38."
 
 
 def test_error_is_not_rephrased_as_a_result() -> None:

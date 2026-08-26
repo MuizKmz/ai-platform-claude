@@ -8,7 +8,7 @@ from app.connectors.sql.semantic_layer import (
     discover_value_hints,
     from_discovered_schema,
 )
-from app.tools.builtin import _run_iot_device_status_template
+from app.tools.builtin import _run_device_status_template
 
 
 def _connector_returning(values_by_column: dict[str, list[str]]) -> SimpleNamespace:
@@ -224,13 +224,20 @@ def test_discovered_schema_becomes_promptable_approved_views() -> None:
     assert "sampled business rows" in prompt
 
 
-def test_reviewed_iot_term_creates_only_an_explicit_metric_template() -> None:
+def test_a_reviewed_term_creates_only_an_explicit_metric_template() -> None:
     semantics = from_discovered_schema(
         [
-            {"name": "eaip_curated.v_devices", "columns": [{"name": "device_id"}]},
+            # Realistic column sets: the views are now identified by what they
+            # CARRY rather than what they are called, so a stub missing
+            # device_name is no longer a devices view. The real
+            # eaip_curated.v_devices has all three.
+            {
+                "name": "eaip_curated.v_devices",
+                "columns": [{"name": "device_id"}, {"name": "device_name"}, {"name": "status"}],
+            },
             {
                 "name": "eaip_curated.v_device_metrics",
-                "columns": [{"name": "metric"}, {"name": "value"}],
+                "columns": [{"name": "device_id"}, {"name": "metric"}, {"name": "value"}],
             },
         ],
         connector_name="IoT test MariaDB",
@@ -249,8 +256,8 @@ def test_reviewed_iot_term_creates_only_an_explicit_metric_template() -> None:
         },
     )
 
-    assert len(semantics.iot_metric_templates) == 1
-    template = semantics.iot_metric_templates[0]
+    assert len(semantics.reviewed_metric_templates) == 1
+    template = semantics.reviewed_metric_templates[0]
     assert template.device_name == "Server Room Unit"
     assert template.metric == "temperature"
     assert "server room temperature" in template.aliases
@@ -277,7 +284,7 @@ def test_online_device_question_uses_the_approved_view_without_an_llm() -> None:
         return QueryResult((), (), sql, 0, False, 1.0)
 
     connector = SimpleNamespace(query=query)
-    result = _run_iot_device_status_template(  # type: ignore[arg-type]
+    result = _run_device_status_template(  # type: ignore[arg-type]
         connector,
         semantics,
         object(),  # type: ignore[arg-type]
@@ -344,7 +351,7 @@ def test_the_status_template_declines_a_superlative() -> None:
     ORDER BY last_seen LIMIT 1 and got it right, so the template was not saving
     a call. It was losing an answer.
     """
-    from app.tools.builtin import _run_iot_device_status_template
+    from app.tools.builtin import _run_device_status_template
 
     semantics = from_discovered_schema(
         [
@@ -369,20 +376,16 @@ def test_the_status_template_declines_a_superlative() -> None:
         "How long has Device-001 been offline?",
         "Which offline device has the most readings?",
     ):
-        assert _run_iot_device_status_template(connector, semantics, object(), richer) is None, (
+        assert _run_device_status_template(connector, semantics, object(), richer) is None, (
             f"the template claimed {richer!r}, which it cannot answer"
         )
 
     # The two questions it CAN answer still reach it.
     assert (
-        _run_iot_device_status_template(
-            connector, semantics, object(), "Which devices are offline?"
-        )
+        _run_device_status_template(connector, semantics, object(), "Which devices are offline?")
         is not None
     )
     assert (
-        _run_iot_device_status_template(
-            connector, semantics, object(), "How many devices are offline?"
-        )
+        _run_device_status_template(connector, semantics, object(), "How many devices are offline?")
         is not None
     )

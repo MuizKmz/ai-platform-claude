@@ -700,11 +700,11 @@ def _summarize_direct_database_result(question: str, content: str, error: str | 
                 "That query ran successfully but matched no data. The device or metric "
                 "you asked about may not be recorded here — check the SQL below."
             )
-        return "Live IoT data was retrieved. Review the executed SQL and returned values below."
+        return "Live data was retrieved. Review the executed SQL and returned values below."
     columns = [column.strip().replace("_", " ") for column in match.group("columns").split("|")]
     values = [value.strip() for value in match.group("values").split("|")]
     if len(columns) != len(values) or not values:
-        return "Live IoT data was retrieved. Review the executed SQL and returned values below."
+        return "Live data was retrieved. Review the executed SQL and returned values below."
 
     # Several rows is a list, and describing only the first one states a
     # fraction of the answer as though it were all of it — "Device-001" when
@@ -713,7 +713,7 @@ def _summarize_direct_database_result(question: str, content: str, error: str | 
     data_lines = [line for line in content.splitlines() if line.strip()]
     row_count = max(len(data_lines) - _HEADER_LINES, 1)
     if row_count > 1:
-        return f"Live IoT data returned {row_count} rows. Review the results and SQL below."
+        return f"Live data returned {row_count} rows. Review the results and SQL below."
 
     # An aggregate over no matching rows returns NULL, and "None" is not a
     # measurement. Rendering it as one produced "Max Temperature Last 24h:
@@ -731,7 +731,7 @@ def _summarize_direct_database_result(question: str, content: str, error: str | 
     window = (
         " in the last 24 hours" if _TIME_WINDOW.search(question) else " in the requested period"
     )
-    return f"Live IoT result{window}: {pairs}."
+    return f"Live result{window}: {pairs}."
 
 
 def _is_null(value: str) -> bool:

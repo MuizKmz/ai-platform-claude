@@ -141,9 +141,9 @@ class QueryDatabaseTool(Tool):
         if not question:
             return ToolResult(content="", error="No question was provided.")
 
-        templated = _run_iot_device_status_template(
+        templated = _run_device_status_template(
             self._connector, self._semantics, principal, question
-        ) or _run_iot_metric_template(self._connector, self._semantics, principal, question)
+        ) or _run_reviewed_metric_template(self._connector, self._semantics, principal, question)
         if templated is not None:
             if isinstance(templated, ConnectorError):
                 return ToolResult(
@@ -163,7 +163,7 @@ class QueryDatabaseTool(Tool):
             )
             return _render_query_result(
                 templated,
-                metadata={"template": "approved_iot_template"},
+                metadata={"template": "approved_reviewed_template"},
             )
 
         # Imported here rather than at module scope: the tool layer must not
@@ -200,7 +200,7 @@ _DEVICE_COUNT = re.compile(r"\b(?:how many|count|number of|total)\b", re.IGNOREC
 _DEVICE_LIST = re.compile(r"\b(?:what|which|list|show)\b.*\bdevices?\b", re.IGNORECASE)
 
 
-def _run_iot_device_status_template(
+def _run_device_status_template(
     connector: Connector, semantics: Any, principal: Principal, question: str
 ) -> QueryResult | ConnectorError | None:
     """Answer basic online/offline device questions without a model call."""
@@ -229,12 +229,15 @@ def _run_iot_device_status_template(
         re.I,
     ):
         return None
+    # Matched by COLUMNS, not by view name. `.v_devices` is a naming convention
+    # of one customer's curated views; a second system with an equivalent view
+    # called `equipment` or `v_assets` would carry the same three columns and
+    # be refused for its name alone.
     devices_view = next(
         (
             view.name
             for view in getattr(semantics, "views", ())
-            if view.name.endswith(".v_devices")
-            and {column.name for column in view.columns} >= {"device_id", "device_name", "status"}
+            if {column.name for column in view.columns} >= {"device_id", "device_name", "status"}
         ),
         None,
     )
@@ -256,7 +259,7 @@ def _run_iot_device_status_template(
         return exc
 
 
-def _run_iot_metric_template(
+def _run_reviewed_metric_template(
     connector: Connector, semantics: Any, principal: Principal, question: str
 ) -> QueryResult | ConnectorError | None:
     """Run a reviewed aggregate without a model-generated SQL step."""
@@ -272,7 +275,7 @@ def _run_iot_metric_template(
     )
     if operation is None:
         return None
-    for template in getattr(semantics, "iot_metric_templates", ()):
+    for template in getattr(semantics, "reviewed_metric_templates", ()):
         if not any(alias and alias in lowered for alias in template.aliases):
             continue
         # View names came from the connector's metadata discovery. Check their

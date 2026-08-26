@@ -86,8 +86,8 @@ class Example:
 
 
 @dataclass(frozen=True)
-class IoTMetricTemplate:
-    """A reviewed, parameter-free mapping for a common IoT aggregate."""
+class ReviewedMetricTemplate:
+    """A reviewed, parameter-free mapping for a common aggregate."""
 
     aliases: tuple[str, ...]
     device_name: str
@@ -102,7 +102,7 @@ class SemanticLayer:
     joins: tuple[JoinPath, ...] = ()
     metrics: tuple[Metric, ...] = ()
     examples: tuple[Example, ...] = ()
-    iot_metric_templates: tuple[IoTMetricTemplate, ...] = ()
+    reviewed_metric_templates: tuple[ReviewedMetricTemplate, ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_prompt(self) -> str:
@@ -230,7 +230,7 @@ def from_discovered_schema(
         views=tuple(views),
         joins=joins,
         notes=tuple(notes),
-        iot_metric_templates=_reviewed_iot_templates(reviewed_training, views),
+        reviewed_metric_templates=_reviewed_metric_templates(reviewed_training, views),
     )
 
 
@@ -599,10 +599,10 @@ def _bounded_text(value: str, limit: int) -> str:
     return " ".join(value.replace("`", "'").split())[:limit]
 
 
-def _reviewed_iot_templates(
+def _reviewed_metric_templates(
     profile: dict[str, Any] | None, views: list[ViewDoc]
-) -> tuple[IoTMetricTemplate, ...]:
-    """Turn an explicit reviewed term into a safe, deterministic IoT mapping.
+) -> tuple[ReviewedMetricTemplate, ...]:
+    """Turn an explicit reviewed term into a safe, deterministic mapping.
 
     Nothing is inferred from database rows. The device and metric must both be
     named in the admin-reviewed profile, and the views must have been discovered
@@ -610,12 +610,24 @@ def _reviewed_iot_templates(
     """
     if not isinstance(profile, dict):
         return ()
+    # Identified by the COLUMNS each view carries, not by its name. `.v_devices`
+    # is one customer's naming convention for its curated views; a second
+    # system exposing the same shape as `v_assets` or `equipment` would be
+    # skipped for its name while being exactly what this needs.
     devices_view = next(
-        (view.name for view in views if view.name.endswith(".v_devices")),
+        (
+            view.name
+            for view in views
+            if {column.name for column in view.columns} >= {"device_id", "device_name"}
+        ),
         None,
     )
     metrics_view = next(
-        (view.name for view in views if view.name.endswith(".v_device_metrics")),
+        (
+            view.name
+            for view in views
+            if {column.name for column in view.columns} >= {"device_id", "metric", "value"}
+        ),
         None,
     )
     if not devices_view or not metrics_view:
@@ -625,7 +637,7 @@ def _reviewed_iot_templates(
         for item in profile.get("metrics", [])
         if isinstance(item, dict) and isinstance(item.get("name"), str)
     }
-    templates: list[IoTMetricTemplate] = []
+    templates: list[ReviewedMetricTemplate] = []
     for term in profile.get("business_terms", []):
         if not isinstance(term, dict):
             continue
@@ -650,7 +662,7 @@ def _reviewed_iot_templates(
         if isinstance(synonyms, list):
             aliases.extend(value for value in synonyms if isinstance(value, str))
         templates.append(
-            IoTMetricTemplate(
+            ReviewedMetricTemplate(
                 aliases=tuple(alias.lower().strip() for alias in aliases if alias.strip()),
                 device_name=device_match.group(1).strip(),
                 metric=metric,
