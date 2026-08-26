@@ -6,7 +6,7 @@
 # which is what keeps `docker compose up -d` on a laptop from acquiring
 # production semantics nobody wanted.
 #
-# Two things this changes, and both exist because the deployment target is a
+# Three things this changes, and all exist because the deployment target is a
 # SHARED, PUBLICLY ADDRESSED host — the aaPanel box already running an IoT
 # platform, a WMS, and a dozen client databases.
 #
@@ -45,6 +45,22 @@
 # Sized for a small VM (4 GB). If the host has more, raise them deliberately
 # rather than removing them — an unbounded container on a shared host is the
 # thing being prevented, not a small one.
+#
+#
+# 3. KEYCLOAK RUNS IN PRODUCTION MODE, WITH A REAL HOSTNAME
+#
+# The base file's `start-dev` serves plain HTTP and guesses its own public
+# address from request headers — explicitly documented by Keycloak as unfit
+# to expose. This overlay switches it to `start` with KC_HOSTNAME set to the
+# real domain and KC_HOSTNAME_STRICT on, so it can sit behind aaPanel's Nginx
+# (which terminates the actual public TLS connection) without ever guessing
+# who is asking or issuing a redirect URL for the wrong origin.
+#
+# Requires EAIP_DOMAIN in .env — the exact public hostname, no scheme, e.g.
+# aiplatform.clbgroups.com — and KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD with
+# no default, unlike the base file's admin/admin. A deployment that forgot to
+# set a real admin password should fail to start, not start with one anyone
+# reading this repository already knows.
 
 services:
   postgres:
@@ -109,4 +125,98 @@ services:
       resources:
         limits:
           memory: 512m
+    logging: *logging
+
+  # Identity (ADR 0009). The base file's `start-dev` is a development command:
+  # plain HTTP, a bootstrap admin defaulting to admin/admin, and hostname
+  # guessed from whatever request arrives — none of that is acceptable once
+  # this is reachable from the internet, even behind a reverse proxy.
+  #
+  # aaPanel's own Nginx terminates the public TLS connection for
+  # aiplatform.clbgroups.com and forwards to Keycloak over loopback as plain
+  # HTTP — the same shape as EAIP's own backend and frontend. Keycloak does
+  # not need its own certificate; it needs to be TOLD the truth about the
+  # connection in front of it, which is what KC_HOSTNAME and KC_PROXY_HEADERS
+  # do below. Get either wrong and Keycloak issues tokens and redirect URLs for
+  # the wrong origin — a login that works from the server itself and breaks
+  # for every real visitor, because the browser is being told to go somewhere
+  # that is not the actual public address.
+  keycloak:
+    # start-dev auto-imports the realm on every boot if the volume is fresh,
+    # serves plain HTTP with hostname guessing, and is explicitly documented
+    # as unfit to expose. `start` requires everything below spelled out
+    # instead of guessed, which is the point.
+    #
+    # Not `start --optimized` — that flag assumes a custom image already
+    # built with `kc.sh build` baked in, and fails first boot against the
+    # stock image with "The '--optimized' flag was used for first ever server
+    # start. Please don't use this flag for the first startup or use 'kc.sh
+    # build' to build the server first." Confirmed by actually booting the
+    # stock image with each flag before writing this. Optimizing the startup
+    # is a real thing to come back to; it is not free with this image alone.
+    command: ["start"]
+    environment:
+      # No default here, unlike the base file's admin/admin. A production
+      # deployment with no admin password set should fail to start, not start
+      # with a credential anyone can find in this repository.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      # `start` (unlike `start-dev`) refuses to boot at all without this,
+      # failing with "Key material not provided to setup HTTPS. Please
+      # configure your keys/certificates or start the server in development
+      # mode." Keycloak has no way to tell "a reverse proxy terminates TLS in
+      # front of me" apart from "nobody configured TLS" — this line is that
+      # missing distinction, made explicit rather than left to a guess. The
+      # container's own port is never published beyond loopback (below), so
+      # the plaintext hop is aaPanel's Nginx to this container on the same
+      # host, not the public internet.
+      KC_HTTP_ENABLED: "true"
+      # The public address, exactly as a browser will type it — scheme
+      # included, so Keycloak knows the outside world is HTTPS even though
+      # the connection reaching this container is plain HTTP from aaPanel's
+      # Nginx. Without the scheme, Keycloak has no way to know the difference
+      # between "the proxy talks HTTP to me" and "the internet talks HTTP to
+      # everyone", and would issue http:// redirect URLs a browser then
+      # refuses or a real attacker could intercept.
+      KC_HOSTNAME: https://${EAIP_DOMAIN}
+      # Never guess the hostname from request headers in production — a
+      # request claiming to be any host would otherwise be believed.
+      KC_HOSTNAME_STRICT: "true"
+      # aaPanel's Nginx sets X-Forwarded-* headers, which is the standard this
+      # value names. Without it, Keycloak sees a loopback connection from
+      # Nginx and has no idea a TLS-terminated public request produced it —
+      # every generated URL comes out http://127.0.0.1, not the real address.
+      KC_PROXY_HEADERS: xforwarded
+    # No public port at all. The base file's "${KEYCLOAK_PORT:-8081}:8080"
+    # would still publish to every interface unless overridden, so it is
+    # replaced here rather than merely rebound — aaPanel's Nginx reaches this
+    # over the docker-compose network by container name, and an operator's
+    # own SSH tunnel is `ssh -L 8081:127.0.0.1:8081 ...` same as the others.
+    ports:
+      - "127.0.0.1:${KEYCLOAK_PORT:-8081}:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 256m
+    logging: *logging
+
+  # No published port. The base file already publishes none — this only adds
+  # the memory limit and logging every other service in this overlay gets.
+  # Keycloak reaches it over the compose network by service name; nothing
+  # outside this stack, including an operator's own SSH tunnel, has a reason
+  # to connect to it directly.
+  keycloak-db:
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 128m
     logging: *logging
