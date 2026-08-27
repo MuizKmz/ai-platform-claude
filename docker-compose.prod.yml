@@ -181,7 +181,17 @@ services:
     # build' to build the server first." Confirmed by actually booting the
     # stock image with each flag before writing this. Optimizing the startup
     # is a real thing to come back to; it is not free with this image alone.
-    command: ["start"]
+    #
+    # --import-realm is not implied by `start` the way it's implied by the
+    # base file's `start-dev --import-realm` — dropped here on the first
+    # attempt at writing this, and only caught by actually deploying: the
+    # container boots cleanly, reports healthy, and `/realms/eaip` returns
+    # "Realm does not exist" because nothing ever told it to read
+    # realm-eaip.json. Same one-time-only behavior as dev (see
+    # infra/keycloak/README.md): it imports only when the realm doesn't
+    # already exist, so this flag is safe to leave on permanently rather
+    # than removing it after the first successful boot.
+    command: ["start", "--import-realm"]
     environment:
       # No default here, unlike the base file's admin/admin. A production
       # deployment with no admin password set should fail to start, not start
