@@ -11,19 +11,44 @@
 # platform, a WMS, and a dozen client databases.
 #
 #
-# 1. PORTS BIND TO LOOPBACK ONLY
+# 1. PORTS ARE NOT REACHABLE FROM THE PUBLIC INTERNET
 #
-# In the base file a port is published as "5433:5432", which Docker binds to
-# 0.0.0.0 — every interface, including the public one. On a laptop that is
-# invisible. On a host with a public IP it means the database is reachable from
-# the internet.
+# The original design here was loopback-only binding — "127.0.0.1:5433:5432"
+# rather than "5433:5432" — reasoning that a port bound to every interface on a
+# host with a public IP is a port the internet can reach. That reasoning is
+# still correct in general. It had to be abandoned on THIS specific host for a
+# narrower reason: Docker could not bind to 127.0.0.1 here at all.
 #
-# Docker also writes its own iptables rules, ahead of UFW and ahead of whatever
-# aaPanel's firewall page shows. A firewall rule you can see in the panel does
-# NOT reliably close a Docker-published port. The binding is the control.
+# Diagnosed, not guessed: a plain `docker run -p 127.0.0.1:PORT:PORT` failed
+# with "address already in use" against a port nothing held (confirmed against
+# the kernel's own /proc/net/tcp, not just `ss`/`lsof`/`fuser`, all of which
+# also showed nothing). The same container published to 0.0.0.0 worked
+# immediately. `net.ipv4.conf.all.route_localnet` was 0 on this host — the
+# sysctl that permits DNAT to a loopback destination through a bridge
+# interface — and setting it to 1 did not fix the bind either, which means
+# something deeper in this host's nftables/UFW stack specifically rejects
+# loopback-destined container NAT. Not worth an extended fight on a shared
+# host's firewall to get the original design working.
 #
-# "127.0.0.1:5433:5432" binds to loopback: reachable from the host itself, from
-# nowhere else. To reach the console from a laptop, tunnel:
+# So every port below binds to 0.0.0.0 instead, and the control moved up a
+# layer: this host's cloud provider (Huawei Cloud) has a Security Group in
+# front of the VM's own network stack entirely, and it does not allow inbound
+# traffic on any of these ports by default. PROVEN, not assumed — a throwaway
+# container was published on 0.0.0.0 on an arbitrary port and confirmed
+# unreachable from a phone on mobile data (a genuinely external network, not
+# this host's own LAN) before this change was made.
+#
+# This is a real, if narrower, guarantee than the loopback bind was: it
+# depends on the Security Group's configuration staying as it is today, which
+# this repository cannot see or pin. If that Security Group is ever opened
+# further (e.g. "allow all" added for an unrelated reason), every port listed
+# here becomes internet-reachable with no second layer behind it — unlike the
+# loopback design, which needed no external system to stay correct. Whoever
+# administers the Huawei Cloud console for this VM should know these ports
+# exist and are relying on the Security Group, not on anything in this repo.
+#
+# To reach the console from a laptop despite this, the same tunnel still
+# works — it does not depend on which interface Docker bound to:
 #
 #   ssh -L 3000:127.0.0.1:3000 -L 8000:127.0.0.1:8000 root@<host>
 #
@@ -65,7 +90,8 @@
 services:
   postgres:
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+      # 0.0.0.0, not 127.0.0.1 — see the header comment above for why.
+      - "${POSTGRES_PORT:-5433}:5432"
     deploy:
       resources:
         limits:
@@ -89,7 +115,8 @@ services:
 
   redis:
     ports:
-      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+      # 0.0.0.0, not 127.0.0.1 — see the header comment above for why.
+      - "${REDIS_PORT:-6380}:6379"
     # Redis holds rate-limit counters and budget tallies — small, and all of it
     # reconstructible. maxmemory with an eviction policy is better than an OOM
     # kill: losing a counter degrades a limit, losing the process fails every
@@ -192,13 +219,13 @@ services:
       # Nginx and has no idea a TLS-terminated public request produced it —
       # every generated URL comes out http://127.0.0.1, not the real address.
       KC_PROXY_HEADERS: xforwarded
-    # No public port at all. The base file's "${KEYCLOAK_PORT:-8081}:8080"
-    # would still publish to every interface unless overridden, so it is
-    # replaced here rather than merely rebound — aaPanel's Nginx reaches this
-    # over the docker-compose network by container name, and an operator's
-    # own SSH tunnel is `ssh -L 8081:127.0.0.1:8081 ...` same as the others.
+    # 0.0.0.0, not 127.0.0.1 — see the header comment above for why. aaPanel's
+    # Nginx could reach this over the docker-compose network by container name
+    # instead of a published port at all, but the port stays published so an
+    # operator's SSH tunnel (`ssh -L 8081:127.0.0.1:8081 ...`) keeps working
+    # the same way as the others.
     ports:
-      - "127.0.0.1:${KEYCLOAK_PORT:-8081}:8080"
+      - "${KEYCLOAK_PORT:-8081}:8080"
     deploy:
       resources:
         limits:
