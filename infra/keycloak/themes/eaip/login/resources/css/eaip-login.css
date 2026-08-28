@@ -46,7 +46,9 @@ body#keycloak-bg {
 .pf-v5-c-login__container {
   display: block !important;
   box-sizing: border-box;
-  width: min(100%, 448px) !important;
+  width: 448px !important;
+  max-width: calc(100vw - 40px) !important;
+  grid-template-columns: none !important;
   margin: 0 !important;
 }
 
