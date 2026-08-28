@@ -779,8 +779,12 @@ and the token never reaches the browser.
 ### Definition of done
 - [x] `sdk/eaip-client`, `sdk/eaip-widget`, `sdk/eaip-proxy-endpoint` built
       and tested (44 tests, against fakes of Keycloak + `/mcp`)
-- [ ] the three packages exercised against the live production MCP endpoint
+- [x] the three packages exercised against the live production MCP endpoint
       with a real `eaip-mcp` credential — the SETUP.md smoke, run for real
+      (`sdk/TESTING.md`, 2026-08-28): a real token exchange, real `tools/list`
+      and `tools/call` through the proxy, a real browser rendering
+      `<EaipChat />` and answering honestly, and DevTools confirming zero
+      browser→EAIP calls — checked by hand, not assumed
 - [ ] the IoT platform integration (the one hand-built and proven today)
       migrated onto the widget, as the first real consumer
 - [ ] the schema-discovery wizard has produced one real curated-views set,
