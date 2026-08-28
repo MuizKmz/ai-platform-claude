@@ -788,7 +788,11 @@ and the token never reaches the browser.
 - [ ] the IoT platform integration (the one hand-built and proven today)
       migrated onto the widget, as the first real consumer
 - [ ] the schema-discovery wizard has produced one real curated-views set,
-      reviewed and approved by a human, for a system connected after IoT
+      reviewed and approved by a human, for a system connected after IoT —
+      see [SECOND_INTEGRATION_DRY_RUN.md](SECOND_INTEGRATION_DRY_RUN.md) for
+      the plan to reach both remaining items: a manual, from-the-docs
+      onboarding of a second (parallel, throwaway) connector first, to find
+      what the docs get wrong before automating it, then the wizard itself
 - [ ] neither plan's explicitly-out-of-scope items (self-serve connector
       creation without review, self-serve Keycloak credential issuance) have
       been quietly folded in without their own design pass
