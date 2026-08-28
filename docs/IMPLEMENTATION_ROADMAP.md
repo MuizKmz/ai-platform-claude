@@ -9,10 +9,12 @@
 > performed,"* which stopped being true a long time ago and misleads anyone
 > assessing where the project stands.
 >
-> **Current state: Phases 0–10 complete. Phase 11 partially done** — identity
-> shipped (ADR 0009); TLS, monitoring, a rehearsed restore, and a load test have
-> not. [`CLAUDE.md`](../CLAUDE.md) is the authority on current state; this file
-> is the authority on *why the order is what it is*.
+> **Current state: Phases 0–11 complete; Phase 12 in progress** — EAIP is
+> deployed and serving at `https://aiplatform.clbgroups.com`, and the Phase 12
+> chat-widget SDK is built (`sdk/`). Monitoring, a rehearsed full-stack restore,
+> and a load test are the acknowledged gaps from Phase 11.
+> [`CLAUDE.md`](../CLAUDE.md) is the authority on current state; this file is the
+> authority on *why the order is what it is*.
 >
 > Two things exist that this plan never mentioned, both driven by the IoT pilot:
 > an integration **training/onboarding** flow, and a **fast path** that answers
@@ -722,7 +724,63 @@ Kubernetes — unless multi-node, HA or GPU scheduling has become a concrete req
 
 ---
 
-## Phases 12+ — Only When Measured
+# Phase 12 — Embeddable Integration
+
+**Duration:** unestimated · **Status:** in progress
+
+### Goal
+Turn "an admin manually wires up a new integration" into something a
+developer installs. Two independent pieces, each planned in full before it
+was built:
+
+- [CHAT_WIDGET_SDK.md](CHAT_WIDGET_SDK.md) — a drop-in chat widget an
+  integrating system's own frontend embeds, proxied through that system's own
+  backend so neither a token nor a secret ever reaches a browser. **Built.**
+- [SCHEMA_DISCOVERY_WIZARD.md](SCHEMA_DISCOVERY_WIZARD.md) — a guided flow
+  that drafts a new system's curated views and semantic-layer entries from
+  its real schema, for an admin to review and approve. Not the model
+  memorizing a schema it stops rechecking — the existing per-question
+  discovery in `semantic_layer.py` reused, with a human gating what gets
+  created. **Not started.**
+
+### Prerequisites
+Phase 11 (deployed and serving) — this is product surface on top of the live
+deployment. Phase 10 (MCP) — the widget's proxy is a client of the same
+`/mcp` endpoint MCP-SETUP.md documents. Phase 4 — the wizard extends how a
+connector gets created.
+
+### Why the widget proxies through the host backend
+The first draft had the browser call `/mcp` directly with a short-lived
+token. Checking it against the live deployment killed that: `/mcp` is not in
+the production reverse proxy's routed paths (`/v1`, `/health`, `/realms`,
+`/admin`, `/resources`, `/` only), and `CORS_ORIGINS` is a single origin.
+`curl` and Claude Desktop don't hit either wall; a browser does. So the host
+backend proxies the tool calls too — EAIP gets no new public surface and no
+per-integration CORS change, and the token never reaches the browser.
+
+### Definition of done
+- [x] `sdk/eaip-client`, `sdk/eaip-widget`, `sdk/eaip-proxy-endpoint` built
+      and tested (44 tests, against fakes of Keycloak + `/mcp`)
+- [ ] the three packages exercised against the live production MCP endpoint
+      with a real `eaip-mcp` credential — the SETUP.md smoke, run for real
+- [ ] the IoT platform integration (the one hand-built and proven today)
+      migrated onto the widget, as the first real consumer
+- [ ] the schema-discovery wizard has produced one real curated-views set,
+      reviewed and approved by a human, for a system connected after IoT
+- [ ] neither plan's explicitly-out-of-scope items (self-serve connector
+      creation without review, self-serve Keycloak credential issuance) have
+      been quietly folded in without their own design pass
+
+### Do NOT build yet
+Self-serve credential issuance (an admin-facing "MCP Connections" page that
+calls Keycloak's admin API on a user's behalf) — named in both plan
+documents as new cross-system trust deserving its own ADR, not something to
+fold into a widget's first version. A browser-to-EAIP path or a per-origin
+CORS allowlist — the proxy shape is the design, not a limitation to lift.
+
+---
+
+## Phases 13+ — Only When Measured
 
 Do not schedule these. Let evidence pull them in.
 
@@ -758,5 +816,6 @@ Do not schedule these. Let evidence pull them in.
 | 9 Writes | 2w | Approved actions | Approval model |
 | 10 MCP | 2w | External interop | Public tool contract |
 | 11 Production | 2w | Live system | Deployment topology |
+| 12 Embeddable integration | unestimated | Widget SDK + schema wizard | Host-backend-proxy shape for the widget |
 
 **Roughly 5–6 months part-time to Phase 11.** If that seems long, note that Phases 1–3 alone — a tenant-safe, evaluated, cited RAG system — is already a more rigorous piece of engineering than most "enterprise AI" deployments in production today. Shipping that and stopping would not be a failure.

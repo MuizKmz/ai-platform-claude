@@ -50,6 +50,8 @@ is for the SETUP.md smoke and a later Playwright E2E, per
 
 ## Status
 
-**Built, tested, not yet wired into a real integration.** The IoT platform is
-the first intended consumer — it already has the hand-configured Keycloak
-credential this needs.
+**Built and tested against fakes; not yet run against the live endpoint or
+wired into a real integration.** MCP itself is already proven end-to-end in
+production with a real `eaip-mcp` token (`infra/keycloak/MCP-SETUP.md`) — what
+remains here is the SETUP.md smoke through the proxy, then migrating the IoT
+platform onto the widget as the first real consumer.

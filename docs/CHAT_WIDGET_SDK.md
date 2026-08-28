@@ -1,8 +1,9 @@
 # The embeddable chat widget — plan
 
 Written before any code, per the discussion that led here. This is the design
-being built; [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) is where
-it gets slotted in once it exists.
+the SDK follows; it is **Phase 12** in
+[IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md). The packages are built
+and tested (`sdk/`); see the Status section at the end for what remains.
 
 ## The actual goal
 
@@ -124,7 +125,9 @@ sdk/
                           on the host backend, not here.
   eaip-widget/            React component (<EaipChat />) built on eaip-client:
                           input box, message list, loading state, error
-                          display, tool-call disclosure.
+                          display. Also exports the useEaipChat hook for a
+                          custom UI. A failed tool is shown as a message, not
+                          hidden — same as the console treats a refusal.
   eaip-proxy-endpoint/    A tiny, copy-pasteable handler for the INTEGRATOR's
                           own backend — Express reference implementation plus
                           a framework-agnostic core (a function that takes a
@@ -134,7 +137,7 @@ sdk/
                           the token, forwards to EAIP /mcp. Not a service
                           EAIP runs; code the integrator mounts on theirs.
   SETUP.md                The install tutorial: register a Keycloak client,
-                          npm install, mount the proxy handler with two env
+                          npm install, mount the proxy handler with four env
                           vars, drop in the component, done.
 ```
 
@@ -205,20 +208,36 @@ by hand.
 
 ## Testing
 
-- `eaip-client` and `eaip-proxy-endpoint` core: unit tests against a fake
-  MCP server (a handful of canned JSON-RPC responses) and a fake token
-  endpoint. Token caching, expiry refresh, the three error classes.
-- The Express reference handler: one integration test that stands up the
-  handler, points it at the fakes, and drives it the way the widget would.
-- `eaip-widget`: component tests (loading → answer, loading → error,
-  not-configured state).
-- Not E2E against the real stack in this slice — that needs a Keycloak
-  client and a running EAIP, and the fakes cover the contract. A manual
-  smoke against the live deployment is the SETUP.md "did it work" step.
+44 tests, Node's built-in runner, no test framework. All against fakes of
+Keycloak and `/mcp` — the contract, not the live stack.
+
+- `eaip-client` (13): against a fake of the host backend's proxy — `tools/list`
+  / `tools/call`, the three error classes, timeout, id increment, `basePath`
+  handling.
+- `eaip-proxy-endpoint` (20): against a fake Keycloak token endpoint and a
+  fake `/mcp` — token caching, single-flight refresh, expiry, the one 401
+  retry, method allowlist, and a check that the service-account token never
+  appears in a response body. Plus a real Express app over a loopback socket
+  driving the router end to end.
+- `eaip-widget` (11): the `useEaipChat` hook, mounted with `react-dom` +
+  jsdom — status transitions, send/answer, a failed tool shown (not hidden),
+  a rate-limit error kept transient, `onExchange`, `reset`. The `EaipChat.tsx`
+  presentational shell is **not** unit-tested — Node's native runner has no
+  `.tsx` support, and the shell carries no logic the hook doesn't; it is
+  covered by the SETUP.md smoke and a later Playwright E2E (ADR 0006).
+- Not E2E against the real stack in this slice — that needs a Keycloak client
+  and a running EAIP. The SETUP.md "did it work" step is the manual smoke
+  against the live deployment.
 
 ## Status
 
-**Plan updated 2026-08-28** after checking it against the live deployment —
-the direct-to-`/mcp` architecture the first draft described cannot work from
-a browser (routing + CORS), so the host backend now proxies the tool calls
-too. Implementation follows this revision next.
+**Built and tested (branch `sdk/chat-widget`).** The plan was revised once,
+on 2026-08-28, before any code: the first draft had the browser call `/mcp`
+directly with a short-lived token, which cannot work (that path is not
+publicly routed and `CORS_ORIGINS` is a single origin), so the host backend
+proxies the tool calls too.
+
+**Not yet done:** the SETUP.md smoke run against the live endpoint with a real
+`eaip-mcp` credential, and migrating the IoT integration onto the widget as
+the first real consumer. Tracked as the open Phase 12 items in
+[IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md).

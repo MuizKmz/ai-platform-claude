@@ -6,12 +6,32 @@ not current state. This file is current state.
 
 ## Current phase
 
-**Phase 11 complete, deployed to production. Phase 12 planned, not started.**
+**Phase 11 complete, deployed to production. Phase 12 in progress.**
 See [docs/CHAT_WIDGET_SDK.md](docs/CHAT_WIDGET_SDK.md) and
 [docs/SCHEMA_DISCOVERY_WIZARD.md](docs/SCHEMA_DISCOVERY_WIZARD.md) for what
 Phase 12 is. Everything below records how each phase up to 11 was reached —
 kept because the reasoning in it is still load-bearing, not because the
 project is still at an earlier phase.
+
+**Phase 12 — the embeddable chat widget SDK is built.** Three packages under
+[sdk/](sdk/): `eaip-client` (framework-agnostic, talks only to the host app's
+own backend), `eaip-widget` (`<EaipChat />` + `useEaipChat`, self-contained
+styling), `eaip-proxy-endpoint` (the copy-paste backend snippet — holds the
+service-account secret, mints and caches a token, forwards MCP calls
+server-to-server). 44 tests against fakes of Keycloak and `/mcp`.
+
+The plan's first draft had the browser call `/mcp` directly with a short-lived
+token. That cannot work: `/mcp` is not in the production reverse proxy's routed
+paths, and `CORS_ORIGINS` is a single origin. So the host backend proxies the
+tool calls too — EAIP gets no new public surface, no per-integration CORS
+change, and the token never reaches the browser. Do not add a browser-to-EAIP
+path or a per-origin CORS allowlist; the proxy shape is the design.
+
+**Still open in Phase 12:** the SETUP.md smoke run against the live endpoint
+with a real `eaip-mcp` credential, and migrating the IoT integration onto the
+widget as the first real consumer. The schema-discovery wizard
+([docs/SCHEMA_DISCOVERY_WIZARD.md](docs/SCHEMA_DISCOVERY_WIZARD.md)) is a
+separate, not-yet-built piece of the same phase.
 
 **Phase 5 complete — two connectors, one interface.** Everything through grounded generation, plus
 PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-only SQL
