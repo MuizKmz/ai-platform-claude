@@ -1,19 +1,18 @@
 # Deploying to the aaPanel host
 
-> **STATUS: NOT PERFORMED.** This is a plan, not a record. EAIP has never run
-> on that host.
+> **STATUS: PERFORMED.** EAIP is live at `https://aiplatform.clbgroups.com` on
+> this host, following the steps below. This document was rewritten during
+> that deployment, twice: once when the plan changed from an SSH-tunnel pilot
+> to a public domain (adding TLS, the reverse proxy, and process managers),
+> and again as real bugs surfaced that only showed up by actually running each
+> step — several are called out inline below with what broke and why, because
+> they're the kind of thing worth knowing before hitting them again on a
+> second host.
 >
-> What actually exists today: EAIP runs on a **developer's machine** — backend,
-> frontend, Postgres, Redis, and Keycloak in local Docker — and reaches the IoT
-> MariaDB on the Huawei host over an **SSH tunnel**. The remote database is
-> read; the platform is not deployed there.
->
-> This revision replaces the SSH-tunnel-only pilot the previous version of this
-> document described. The domain **aiplatform.clbgroups.com** now points at
-> this host, and the goal is a real public login through Keycloak — not a demo
-> reachable only by whoever holds the tunnel. That changes three things the
-> original plan didn't need: TLS, a reverse proxy, and a process manager that
-> keeps the backend and frontend running without a person watching a terminal.
+> A developer's local machine (backend, frontend, Postgres, Redis, Keycloak
+> in local Docker, reaching the IoT MariaDB over an SSH tunnel) remains the
+> normal way to develop against this codebase day to day — this document only
+> covers the separate, additional production deployment.
 
 The target is the Huawei Cloud VM that already runs the IoT platform, a WMS,
 and around a dozen client databases under aaPanel.
@@ -526,10 +525,14 @@ Nothing in this sequence touches an existing site, database, or user.
 
 Being explicit, so nobody over-reads a working deployment:
 
-- **No rehearsed restore.** Keycloak's database is a backup obligation
-  separate from EAIP's own — a restore that recovers EAIP but not Keycloak
-  recovers a platform nobody can log into (CLAUDE.md, Phase 11). Neither has
-  been drilled on this host yet.
+- **Daily backups exist and are restore-verified, but only in isolation.**
+  Both EAIP's own Postgres and Keycloak's database (a separate backup
+  obligation — a restore that recovers EAIP but not Keycloak recovers a
+  platform nobody can log into) are dumped daily via cron and each has
+  actually been restored into a disposable container and queried, not just
+  assumed to work. What hasn't been drilled is restoring the *whole stack
+  together* on this host after a real loss — the individual pieces are
+  proven, the end-to-end recovery procedure is not.
 - **No monitoring or alerting.** If a process crashes, aaPanel's process
   manager restarts it — but nothing pages anyone, and nothing tracks whether
   it's crash-looping.

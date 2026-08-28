@@ -6,6 +6,13 @@ not current state. This file is current state.
 
 ## Current phase
 
+**Phase 11 complete, deployed to production. Phase 12 planned, not started.**
+See [docs/CHAT_WIDGET_SDK.md](docs/CHAT_WIDGET_SDK.md) and
+[docs/SCHEMA_DISCOVERY_WIZARD.md](docs/SCHEMA_DISCOVERY_WIZARD.md) for what
+Phase 12 is. Everything below records how each phase up to 11 was reached —
+kept because the reasoning in it is still load-bearing, not because the
+project is still at an earlier phase.
+
 **Phase 5 complete — two connectors, one interface.** Everything through grounded generation, plus
 PDF/DOCX/HTML ingestion, document lifecycle, a background worker, and a read-only SQL
 connector whose write-refusal is enforced by a Postgres role rather than by inspecting
@@ -71,10 +78,29 @@ Keycloak should not watch 137 tests fail.
 Keycloak's database is a **separate backup obligation**. A restore that recovers EAIP but
 not Keycloak recovers a platform nobody can log into.
 
-**Still open in Phase 11:** TLS, monitoring and alerting, a rehearsed restore, and a load
-test. All of them wait on a decision this project has not made — where EAIP will actually
-run. It currently runs on a developer's machine and reaches the IoT MariaDB over an SSH
-tunnel. `infra/DEPLOY-aapanel.md` describes a deployment that **has not been performed.**
+**Phase 11 complete — deployed, not just designed.** EAIP runs in production at
+`https://aiplatform.clbgroups.com`, on the aaPanel/Huawei host, behind aaPanel's own
+Nginx reverse proxy terminating real TLS (Let's Encrypt). `infra/DEPLOY-aapanel.md`
+describes a deployment that **has been performed** — the doc was rewritten mid-deployment
+once the plan changed from an SSH-tunnel pilot to a public domain, and again as real bugs
+surfaced only by actually running it: `start`, not `start --optimized`, on first
+Keycloak boot; `--import-realm` had to be spelled out again since `start` doesn't imply it
+the way the dev file's `start-dev --import-realm` does; and this specific host cannot bind
+a Docker-published port to `127.0.0.1` (a kernel/nftables interaction, not a config
+mistake), so `docker-compose.prod.yml` binds `0.0.0.0` and relies on the cloud provider's
+Security Group instead — verified externally unreachable before being trusted, not
+assumed. A real tenant, a real admin user, and the IoT MariaDB connector are live; MCP
+was proven working end-to-end with a real token against the real `eaip-mcp` client.
+
+Two Postgres databases (EAIP's own, and Keycloak's) are backed up daily via cron and
+**restore-verified** — each dump was actually restored into a disposable container and
+its tables queried, not just assumed to work because the dump command exited zero.
+
+**Still genuinely open:** monitoring and alerting (nothing pages anyone if a process
+crashes at 3am — aaPanel's process managers restart it, but nobody is told), a *rehearsed*
+restore of the whole stack together rather than one database restore proven in isolation,
+a load test, and getting backups copied off the VM itself rather than living only on the
+disk they protect against. None of these block real use; all of them are real gaps.
 
 **MySQL is supported alongside Postgres** (ADR 0008). The ERP, WMS, MES, and IoT systems
 this platform serves all run MySQL, so proving the safety layers against Postgres alone
@@ -99,6 +125,10 @@ than updating the hash.
 See [docs/IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for what each phase unlocks.
 
 ## How to run
+
+This section is local development only. **Production is live** at
+`https://aiplatform.clbgroups.com` — see [infra/DEPLOY-aapanel.md](infra/DEPLOY-aapanel.md)
+for how it's actually deployed and run there; do not treat anything below as describing it.
 
 ```powershell
 docker compose up -d          # Postgres 17 + pgvector, Redis 7, MySQL 8.4, Keycloak
