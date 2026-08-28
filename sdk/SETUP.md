@@ -37,13 +37,15 @@ They give you four values:
 | Token endpoint | `https://aiplatform.clbgroups.com/realms/eaip/protocol/openid-connect/token` |
 | Client id | `eaip-mcp-wms` |
 | Client secret | *(treat like a password)* |
-| EAIP MCP URL | the address your backend can reach EAIP's `/mcp` at, server-to-server |
+| EAIP MCP URL | `https://aiplatform.clbgroups.com/mcp` |
 
-> **On the MCP URL:** in the current production deployment EAIP's `/mcp` is not
-> publicly routed. Your backend reaches it over whatever server-to-server path
-> you have — a private network address, an internal proxy rule you add, or an
-> SSH tunnel. Your *browser* never needs it. If EAIP later routes `/mcp`
-> publicly, a public URL works here too.
+> **On the MCP URL:** `/mcp` is publicly routed on the production deployment
+> (verified with `curl -X POST https://aiplatform.clbgroups.com/mcp` →
+> `405` for a bare GET, meaning the route reaches the backend rather than
+> falling through to the frontend). Your backend calls this URL directly,
+> the same as any other server-to-server HTTPS call — no private network
+> path, internal proxy rule, or tunnel needed. Your *browser* never calls it
+> at all; only your backend does.
 
 ---
 
@@ -59,7 +61,7 @@ Put the four values in your backend's `.env`:
 EAIP_MCP_TOKEN_URL=https://aiplatform.clbgroups.com/realms/eaip/protocol/openid-connect/token
 EAIP_MCP_CLIENT_ID=eaip-mcp-wms
 EAIP_MCP_CLIENT_SECRET=...          # never commit this
-EAIP_MCP_URL=http://10.0.0.5:8000/mcp
+EAIP_MCP_URL=https://aiplatform.clbgroups.com/mcp
 ```
 
 ### Express
