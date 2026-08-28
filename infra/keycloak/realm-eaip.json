@@ -2,6 +2,7 @@
   "realm": "eaip",
   "enabled": true,
   "displayName": "EAIP",
+  "loginTheme": "eaip",
   "sslRequired": "external",
   "registrationAllowed": false,
   "resetPasswordAllowed": true,

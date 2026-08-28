@@ -1,0 +1,139 @@
+/* EAIP login theme — overrides Keycloak's built-in "keycloak.v2" (PatternFly
+ * v5) login CSS only. Every selector below was checked against the real
+ * rendered HTML at aiplatform.clbgroups.com on 2026-08-28 (curl against a
+ * real PKCE-complete /auth request, not the browser devtools guess an
+ * earlier draft of this file was written from — that draft targeted
+ * .login-pf / .card-pf, classes from an OLDER Keycloak theme this realm
+ * does not use, and would have deployed and changed nothing).
+ *
+ * Color values copied directly from frontend/src/app/globals.css's `.dark`
+ * block, not re-eyeballed — the whole point is one palette, not two that
+ * happen to look similar. If that file's tokens change, update these too.
+ */
+
+:root {
+  --eaip-bg: #17181d;              /* --background: oklch(0.17 0.008 250) */
+  --eaip-fg: #e8e9ec;               /* --foreground: oklch(0.93 0.004 250) */
+  --eaip-card: #212228;             /* --card: oklch(0.21 0.009 250) */
+  --eaip-border: #35363d;           /* --border: oklch(0.28 0.01 250) */
+  --eaip-input: #262730;            /* --secondary: oklch(0.26 0.01 250) */
+  --eaip-muted-fg: #9a9ba3;         /* --muted-foreground: oklch(0.65 0.012 250) */
+  --eaip-primary: #4f8ff0;          /* --primary: oklch(0.68 0.15 245) */
+  --eaip-primary-fg: #17181d;       /* --primary-foreground: oklch(0.17 0.008 250) */
+  --eaip-destructive: #e0616f;      /* --destructive: oklch(0.65 0.19 27) */
+  --eaip-radius: 0.4rem;            /* --radius, matching globals.css */
+}
+
+/* The page background. #keycloak-bg is the real id on <body> — verified,
+ * not assumed. PatternFly's own dark-mode class also lands on <html>, so
+ * this wins regardless of which mode a visitor's OS is set to; EAIP's own
+ * console is dark-only today for the same "control plane" reasoning
+ * documented in globals.css, so there is no light variant to switch to. */
+body#keycloak-bg,
+html.pf-v5-theme-dark body#keycloak-bg {
+  background: var(--eaip-bg) !important;
+  color: var(--eaip-fg);
+  font-family:
+    "Geist",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+
+/* The wordmark. #kc-header-wrapper is the real element PatternFly renders
+ * the realm's display name into — verified against the live HTML, where it
+ * currently prints the plain text "EAIP". Restyled to match the uppercase,
+ * letter-spaced treatment frontend/src/app/login/page.tsx already uses for
+ * its own "Enterprise AI Integration Platform" label, rather than a new,
+ * third visual treatment. */
+#kc-header-wrapper {
+  color: var(--eaip-fg) !important;
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.pf-v5-c-title {
+  color: var(--eaip-fg) !important;
+}
+
+/* The card PatternFly's own styles.css draws the form inside. Kept as a
+ * flat panel rather than the glass-surface treatment — see theme.properties
+ * for why. Close to --card in globals.css so it reads as the same material
+ * family as the rest of the product, just simpler. */
+.pf-v5-c-login__main {
+  background: var(--eaip-card) !important;
+  border: 1px solid var(--eaip-border) !important;
+  border-radius: calc(var(--eaip-radius) * 3) !important;
+  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* Inputs. .pf-v5-c-form-control is the real wrapper span around each
+ * <input> — verified. PatternFly's default light-grey box reads as
+ * unstyled against a dark page; matching globals.css's --input /
+ * --border instead. */
+.pf-v5-c-form-control,
+.pf-v5-c-form-control input,
+input#username,
+input#password {
+  background: var(--eaip-input) !important;
+  color: var(--eaip-fg) !important;
+  border-color: var(--eaip-border) !important;
+  border-radius: var(--eaip-radius) !important;
+}
+
+.pf-v5-c-form-control:focus-within,
+input:focus {
+  border-color: var(--eaip-primary) !important;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--eaip-primary) 30%, transparent) !important;
+  outline: none !important;
+}
+
+.pf-v5-c-form__label-text {
+  color: var(--eaip-fg) !important;
+  font-weight: 500 !important;
+}
+
+/* The one accent color on the page — matches --primary in globals.css
+ * exactly, not PatternFly's default blue. #kc-login is the real Sign In
+ * button id, verified against the live HTML. */
+.pf-v5-c-button.pf-m-primary,
+#kc-login {
+  background: var(--eaip-primary) !important;
+  border-color: var(--eaip-primary) !important;
+  color: var(--eaip-primary-fg) !important;
+  font-weight: 600 !important;
+  border-radius: var(--eaip-radius) !important;
+}
+
+.pf-v5-c-button.pf-m-primary:hover,
+#kc-login:hover {
+  filter: brightness(1.08);
+}
+
+/* The show/hide password toggle button — .pf-m-control, distinct from
+ * .pf-m-primary above. Left closer to neutral; it is a utility control,
+ * not the page's one call to action. */
+.pf-v5-c-button.pf-m-control {
+  background: var(--eaip-input) !important;
+  border-color: var(--eaip-border) !important;
+  color: var(--eaip-muted-fg) !important;
+}
+
+a,
+.pf-v5-c-helper-text__item-text a {
+  color: var(--eaip-primary) !important;
+}
+
+.pf-v5-c-helper-text__item-text {
+  color: var(--eaip-muted-fg) !important;
+}
+
+.kc-feedback-text,
+.pf-v5-c-alert.pf-m-danger {
+  color: var(--eaip-destructive) !important;
+}

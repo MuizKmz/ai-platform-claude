@@ -102,6 +102,12 @@ services:
       # afterwards changes nothing until the volume is reset — realm changes
       # made in the console are the source of truth from then on.
       - ./infra/keycloak/realm-eaip.json:/opt/keycloak/data/import/realm-eaip.json:ro
+      # The custom login theme (infra/keycloak/themes/eaip/) — CSS only,
+      # extends the built-in keycloak.v2 theme rather than replacing its
+      # templates. Unlike the realm import, mounted files here are read on
+      # every request, not imported once — editing the CSS and restarting
+      # the container (or, once set, a Keycloak cache-clear) is enough.
+      - ./infra/keycloak/themes/eaip:/opt/keycloak/themes/eaip:ro
     depends_on:
       keycloak-db:
         condition: service_healthy
