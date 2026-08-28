@@ -712,12 +712,26 @@ Phase 8 DoD met (10 and 9 are optional for a first production release — a read
 - Load test establishing real capacity numbers
 
 ### Definition of done
-- [ ] Deployed and serving real users
-- [ ] A rollback has been **performed**, not just documented
-- [ ] Alerts fire before users notice
-- [ ] Cost per tenant per day is on a dashboard
-- [ ] Capacity is a measured number, not an estimate
-- [ ] The runbook has been used by someone who did not write it
+- [x] Deployed and serving real users — `https://aiplatform.clbgroups.com`,
+      aaPanel/Huawei host, TLS via Let's Encrypt through aaPanel's own Nginx
+      rather than Caddy (the host already runs Nginx for a dozen other sites;
+      adding a second reverse proxy on the same box was the wrong trade
+      against this deliverable's real intent, not a shortcut on it)
+- [ ] A rollback has been **performed**, not just documented — `docker
+      compose down`/`up` exercised for the four Docker services; a full
+      application rollback (backend/frontend to a prior commit) has not
+- [ ] Alerts fire before users notice — no Prometheus/Grafana/Langfuse yet;
+      aaPanel's process managers restart a crashed process but page no one
+- [x] Two independent daily backups exist and are **restore-verified** —
+      EAIP's own Postgres and Keycloak's database, each actually restored
+      into a disposable container and queried, not just dumped and trusted
+- [ ] Cost per tenant per day is on a dashboard — trace data exists
+      (Security Invariant #6); no dashboard aggregates it yet
+- [ ] Capacity is a measured number, not an estimate — the host's real
+      constraint (shared with ~20 other client apps, ~5GB of 5.5GB routinely
+      used) is now known from a real incident, not from a load test
+- [ ] The runbook has been used by someone who did not write it —
+      `infra/DEPLOY-aapanel.md` has been used once, by whoever wrote it
 
 ### Do NOT build yet
 Kubernetes — unless multi-node, HA or GPU scheduling has become a concrete requirement, which it almost certainly has not.
