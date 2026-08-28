@@ -45,7 +45,8 @@ body#keycloak-bg {
 
 .pf-v5-c-login__container {
   display: block !important;
-  width: min(100%, 28rem) !important;
+  box-sizing: border-box;
+  width: min(100%, 448px) !important;
   margin: 0 !important;
 }
 
@@ -83,7 +84,9 @@ body#keycloak-bg {
 }
 
 .pf-v5-c-login__main {
-  padding: 2.25rem !important;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 36px !important;
   overflow: hidden;
   border: 1px solid var(--eaip-border) !important;
   border-radius: calc(var(--eaip-radius) * 1.5) !important;
@@ -92,6 +95,7 @@ body#keycloak-bg {
 }
 
 .pf-v5-c-login__main-header {
+  display: block !important;
   margin-bottom: 1.75rem !important;
 }
 
@@ -188,6 +192,6 @@ a,
   }
 
   .pf-v5-c-login__main {
-    padding: 1.5rem !important;
+    padding: 24px !important;
   }
 }
