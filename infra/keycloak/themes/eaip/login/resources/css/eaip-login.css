@@ -1,143 +1,169 @@
-/* EAIP login theme — overrides Keycloak's built-in "keycloak.v2" (PatternFly
- * v5) login CSS only. Every selector below was checked against the real
- * rendered HTML and the real base stylesheet at aiplatform.clbgroups.com on
- * 2026-08-28 (curl --compressed against a real PKCE-complete /auth request
- * and the theme's own styles.css — not a browser devtools guess. A first
- * pass here deleted the base theme's `.login-pf body { background:
- * url(keycloak-bg.png)... }` rule via `!important` without replacing it,
- * which produced a flat black void — screenshotted, called out as worse
- * than the unstyled default, and it was. This version replaces the image
- * with a real gradient rather than nothing.)
- *
- * Color values copied directly from frontend/src/app/globals.css's `.dark`
- * block, not re-eyeballed — the whole point is one palette, not two that
- * happen to look similar. If that file's tokens change, update these too.
+/*
+ * EAIP login theme for Keycloak 26's built-in keycloak.v2 (PatternFly v5)
+ * template. This intentionally styles the stock template rather than
+ * duplicating its login form: password handling, errors, MFA and recovery
+ * flows therefore remain Keycloak-owned.
  */
 
 :root {
-  --eaip-bg: #17181d;              /* --background: oklch(0.17 0.008 250) */
-  --eaip-fg: #e8e9ec;               /* --foreground: oklch(0.93 0.004 250) */
-  --eaip-card: #212228;             /* --card: oklch(0.21 0.009 250) */
-  --eaip-border: #35363d;           /* --border: oklch(0.28 0.01 250) */
-  --eaip-input: #262730;            /* --secondary: oklch(0.26 0.01 250) */
-  --eaip-muted-fg: #9a9ba3;         /* --muted-foreground: oklch(0.65 0.012 250) */
-  --eaip-primary: #4f8ff0;          /* --primary: oklch(0.68 0.15 245) */
-  --eaip-primary-fg: #17181d;       /* --primary-foreground: oklch(0.17 0.008 250) */
-  --eaip-destructive: #e0616f;      /* --destructive: oklch(0.65 0.19 27) */
-  --eaip-radius: 0.4rem;            /* --radius, matching globals.css */
-  --eaip-chart-2: #6fc4b8;          /* --chart-2: oklch(0.72 0.13 190) */
-  --eaip-chart-3: #c98fe0;          /* --chart-3: oklch(0.7 0.14 310) */
+  --eaip-bg: #11191d;
+  --eaip-surface: #1c2028;
+  --eaip-surface-raised: #242936;
+  --eaip-fg: #f1f4f8;
+  --eaip-muted: #aab3bf;
+  --eaip-border: #394150;
+  --eaip-primary: #3ca6f2;
+  --eaip-primary-strong: #2495e7;
+  --eaip-danger: #ff8791;
+  --eaip-radius: 0.75rem;
 }
 
-/* The page background. #keycloak-bg is the real id on <body> — verified.
- * Replaces the base theme's keycloak-bg.png (a Keycloak-branded photo,
- * wrong for this product anyway) with four soft, static radial gradients in
- * EAIP's own accent colors against the near-black ground — the same colour
- * *language* as globals.css's animated .gradient-mesh, without recreating
- * its animation/pointer-tracking JS in a page we don't control the script
- * loading for. Depth from colour and shape, not from motion. */
+/* A quiet version of the app background: product-recognisable but less busy
+ * while someone enters a password. */
 body#keycloak-bg {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--eaip-fg);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   background-color: var(--eaip-bg) !important;
   background-image:
-    radial-gradient(at 15% 20%, color-mix(in oklch, var(--eaip-primary) 20%, transparent) 0px, transparent 50%),
-    radial-gradient(at 85% 15%, color-mix(in oklch, var(--eaip-chart-3) 14%, transparent) 0px, transparent 45%),
-    radial-gradient(at 75% 80%, color-mix(in oklch, var(--eaip-chart-2) 16%, transparent) 0px, transparent 50%),
-    radial-gradient(at 20% 85%, color-mix(in oklch, var(--eaip-primary) 10%, transparent) 0px, transparent 40%) !important;
-  background-repeat: no-repeat !important;
-  background-size: cover !important;
+    radial-gradient(circle at 12% 12%, rgb(60 166 242 / 15%), transparent 32rem),
+    radial-gradient(circle at 88% 88%, rgb(73 193 167 / 12%), transparent 28rem),
+    linear-gradient(135deg, #102533 0%, var(--eaip-bg) 45%, #121a1b 100%) !important;
   background-attachment: fixed !important;
-  color: var(--eaip-fg);
-  font-family:
-    "Geist",
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
 }
 
-/* The wordmark. #kc-header-wrapper already gets real styling from the base
- * theme's own styles.css (29px, uppercase, 3px letter-spacing, centered) —
- * left alone rather than re-declared with different values, which is what
- * an earlier pass did for no reason. Only the colour is overridden, to
- * guarantee it resolves to EAIP's foreground token rather than a PatternFly
- * CSS variable that may or may not carry through this override. */
+/* Keycloak's default desktop layout puts its header beside the card. A
+ * single, centred column makes the brand and credential form one product. */
+.pf-v5-c-login {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem 1.25rem;
+}
+
+.pf-v5-c-login__container {
+  display: block !important;
+  width: min(100%, 28rem) !important;
+  margin: 0 !important;
+}
+
+.pf-v5-c-login__header {
+  margin: 0 0 1rem !important;
+  padding: 0 0.25rem !important;
+  text-align: left !important;
+}
+
 #kc-header-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
   color: var(--eaip-fg) !important;
+  font-size: 1rem !important;
+  font-weight: 700;
+  letter-spacing: 0.08em !important;
+  line-height: 1.25;
+  text-transform: uppercase;
 }
 
-.pf-v5-c-title {
-  color: var(--eaip-fg) !important;
+#kc-header-wrapper::before {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid rgb(60 166 242 / 50%);
+  border-radius: 0.55rem;
+  color: var(--eaip-primary);
+  background: rgb(60 166 242 / 12%);
+  content: ">_";
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+  letter-spacing: -0.1em;
 }
 
-/* The card PatternFly's own styles.css draws the form inside
- * (.pf-v5-c-login__main, a real single-column grid area — verified, not the
- * side-by-side layout an earlier screenshot showed, which came from
- * PatternFly's base framework CSS at a wider viewport, not from this file).
- * Kept as a flat panel rather than the glass-surface treatment — see
- * theme.properties for why. Close to --card in globals.css so it reads as
- * the same material family as the rest of the product, just simpler. */
 .pf-v5-c-login__main {
-  background: color-mix(in oklch, var(--eaip-card) 88%, transparent) !important;
+  padding: 2.25rem !important;
+  overflow: hidden;
   border: 1px solid var(--eaip-border) !important;
-  border-radius: calc(var(--eaip-radius) * 3) !important;
-  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.5) !important;
-  backdrop-filter: blur(12px);
-  padding: 2.5rem !important;
+  border-radius: calc(var(--eaip-radius) * 1.5) !important;
+  background: var(--eaip-surface) !important;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 34%) !important;
 }
 
-/* Inputs. .pf-v5-c-form-control is the real wrapper span around each
- * <input> — verified. PatternFly's default light-grey box reads as
- * unstyled against a dark page; matching globals.css's --input /
- * --border instead. */
+.pf-v5-c-login__main-header {
+  margin-bottom: 1.75rem !important;
+}
+
+.pf-v5-c-title,
+#kc-page-title {
+  color: var(--eaip-fg) !important;
+  font-size: clamp(1.5rem, 4vw, 1.8rem) !important;
+  font-weight: 650 !important;
+  letter-spacing: -0.03em;
+  line-height: 1.2 !important;
+}
+
+/* The h1 remains Keycloak's localised message and retains its normal
+ * screen-reader semantics; this is supplementary visual context. */
+.pf-v5-c-login__main-header::after {
+  display: block;
+  max-width: 22rem;
+  margin-top: 0.55rem;
+  color: var(--eaip-muted);
+  content: "Use your organisation account to continue securely.";
+  font-size: 0.9rem;
+  letter-spacing: 0;
+  line-height: 1.55;
+}
+
+.pf-v5-c-form__label-text {
+  color: var(--eaip-fg) !important;
+  font-weight: 600 !important;
+}
+
 .pf-v5-c-form-control,
 .pf-v5-c-form-control input,
 input#username,
 input#password {
-  background: var(--eaip-input) !important;
-  color: var(--eaip-fg) !important;
+  min-height: 2.85rem;
   border-color: var(--eaip-border) !important;
-  border-radius: var(--eaip-radius) !important;
+  border-radius: 0.55rem !important;
+  color: var(--eaip-fg) !important;
+  background: var(--eaip-surface-raised) !important;
+}
+
+.pf-v5-c-form-control input::placeholder {
+  color: #8993a0;
 }
 
 .pf-v5-c-form-control:focus-within,
 input:focus {
   border-color: var(--eaip-primary) !important;
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--eaip-primary) 30%, transparent) !important;
+  box-shadow: 0 0 0 3px rgb(60 166 242 / 25%) !important;
   outline: none !important;
 }
 
-.pf-v5-c-form__label-text {
-  color: var(--eaip-fg) !important;
-  font-weight: 500 !important;
-}
-
-/* The one accent color on the page — matches --primary in globals.css
- * exactly, not PatternFly's default blue. #kc-login is the real Sign In
- * button id, verified against the live HTML. */
 .pf-v5-c-button.pf-m-primary,
 #kc-login {
-  background: var(--eaip-primary) !important;
+  min-height: 2.9rem;
   border-color: var(--eaip-primary) !important;
-  color: var(--eaip-primary-fg) !important;
-  font-weight: 600 !important;
-  border-radius: var(--eaip-radius) !important;
-  padding-top: 0.65rem !important;
-  padding-bottom: 0.65rem !important;
+  border-radius: 0.55rem !important;
+  color: #071522 !important;
+  background: var(--eaip-primary) !important;
+  font-weight: 700 !important;
 }
 
 .pf-v5-c-button.pf-m-primary:hover,
 #kc-login:hover {
-  filter: brightness(1.08);
+  border-color: var(--eaip-primary-strong) !important;
+  background: var(--eaip-primary-strong) !important;
 }
 
-/* The show/hide password toggle button — .pf-m-control, distinct from
- * .pf-m-primary above. Left closer to neutral; it is a utility control,
- * not the page's one call to action. */
 .pf-v5-c-button.pf-m-control {
-  background: var(--eaip-input) !important;
+  color: var(--eaip-muted) !important;
   border-color: var(--eaip-border) !important;
-  color: var(--eaip-muted-fg) !important;
+  background: var(--eaip-surface-raised) !important;
 }
 
 a,
@@ -145,11 +171,23 @@ a,
   color: var(--eaip-primary) !important;
 }
 
-.pf-v5-c-helper-text__item-text {
-  color: var(--eaip-muted-fg) !important;
+.pf-v5-c-helper-text__item-text,
+.pf-v5-c-form__helper-text {
+  color: var(--eaip-muted) !important;
 }
 
 .kc-feedback-text,
 .pf-v5-c-alert.pf-m-danger {
-  color: var(--eaip-destructive) !important;
+  color: var(--eaip-danger) !important;
+}
+
+@media (max-width: 480px) {
+  .pf-v5-c-login {
+    align-items: flex-start;
+    padding: 1.5rem 1rem;
+  }
+
+  .pf-v5-c-login__main {
+    padding: 1.5rem !important;
+  }
 }
