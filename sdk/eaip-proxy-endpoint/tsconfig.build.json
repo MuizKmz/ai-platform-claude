@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    // `.ts` specifiers in source are rewritten to `.js` in the emitted output
+    // by rewriteRelativeImportExtensions (inherited). This stays enabled for
+    // the build too; allowImportingTsExtensions requires either noEmit or this.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src"],
+  "exclude": ["test"]
+}
