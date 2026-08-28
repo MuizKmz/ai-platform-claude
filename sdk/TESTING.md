@@ -18,12 +18,38 @@ This file is the *first* time through, done by us, locally, to prove the chain.
 | Piece | State |
 |---|---|
 | `sdk/eaip-client`, `sdk/eaip-widget`, `sdk/eaip-proxy-endpoint` | **Built. 44 tests green against fakes.** |
-| Run against real Keycloak + real EAIP `/mcp` | **Not done — this doc.** |
-| A demo host app that mounts the widget | **Not built — step 5 below.** |
+| Run against real Keycloak + real EAIP `/mcp` | **Done — proven 2026-08-28, against production.** |
+| A demo host app that mounts the widget | **Built and run — Express + Vite, in a scratch dir, not committed.** |
 | IoT integration migrated onto the widget | Not started (a later Phase 12 item) |
 
-Nothing here needs a code change to the SDK. What's missing is configuration
-only you / an EAIP admin can supply, plus a small throwaway demo app.
+**Proven, not just built.** A throwaway Express server (using `eaipProxyRouter()`
+exactly as `SETUP.md` documents, with the real production `eaip-mcp` secret)
+plus a Vite-served React page rendering `<EaipChat />` were run locally,
+pointed at `https://aiplatform.clbgroups.com`, not a local stack. Results:
+
+- `POST /api/eaip/session` → `{"ok":true}` — real token exchange against
+  production Keycloak.
+- `tools/list` through the proxy → `search_knowledge` and `query_iot`, the
+  same list `MCP-SETUP.md`'s direct-`curl` test returned earlier.
+- The widget in a real browser answered real questions — honest answers
+  (`"No matching passages were found"`), never a fabricated one.
+- **Browser DevTools → Network, checked directly**: only two requests ever
+  fire from the browser — `session` and `mcp`, both to
+  `http://localhost:5173/api/eaip/*`. Nothing to `aiplatform.clbgroups.com`,
+  nothing to Keycloak, no token anywhere in a request the browser made. This
+  is the architecture's central claim, confirmed by looking, not assumed.
+
+One real bug found and fixed doing this: a first draft of the demo server put
+a *global* `express.json()` ahead of `eaipProxyRouter()`, which already
+mounts its own — the global one drained the request body stream first,
+and the router's own parser then failed with `"stream is not readable"`.
+Not an SDK bug: `SETUP.md`'s own example never shows a global body parser
+ahead of the router, and the fix was removing the redundant one from the
+demo, not changing the SDK.
+
+Nothing here needed a code change to the SDK. What was missing was
+configuration only an EAIP admin can supply (the `eaip-mcp` secret) plus a
+small throwaway demo app to drive it — both now done.
 
 ---
 
@@ -250,11 +276,17 @@ against the live production MCP endpoint with a real `eaip-mcp` credential."*
 
 ## What "done" looks like after this
 
-- [ ] Step 3 (raw curl) returns a grounded answer
-- [ ] Step 5 (local demo) — the widget answers in a browser, and devtools
-      confirms no browser→EAIP calls and no token in any body
-- [ ] Step 6 (live) — same, against `aiplatform.clbgroups.com`
+- [x] Step 3 equivalent (proxy `tools/list` and `tools/call`) returns real
+      results, against production — done via `curl` against the demo
+      server's own `/api/eaip/mcp`, not the direct MCP endpoint, since the
+      point was proving the SDK's own proxy path, not re-proving `/mcp`
+      itself (already proven in `infra/keycloak/MCP-SETUP.md`)
+- [x] Step 5/6 combined — skipped the local-stack version and went straight
+      at production, since we were working on the production host anyway.
+      The widget answers in a browser, and DevTools confirmed no
+      browser→EAIP calls and no token in any request the browser made.
 - [ ] then: pick the first real integration (IoT) and follow SETUP.md for real
+      — genuinely the next open item
 
 ---
 
