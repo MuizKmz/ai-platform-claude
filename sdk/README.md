@@ -9,16 +9,19 @@ without an EAIP engineer hand-building the integration.
 | [`eaip-widget`](./eaip-widget) | React `<EaipChat />` built on `eaip-client`. Self-contained styling, no design-system dependency. Also exports the `useEaipChat` hook. |
 | [`eaip-proxy-endpoint`](./eaip-proxy-endpoint) | The copy-paste backend snippet for the integrator. Holds the service-account secret, mints and caches a token, forwards MCP calls to EAIP. Express adapter + framework-agnostic core. |
 
-**Install tutorial:** [SETUP.md](./SETUP.md).
+**Install tutorial** (for an integrating developer): [SETUP.md](./SETUP.md).
+**First-time test runbook** (prove the chain locally, then live): [TESTING.md](./TESTING.md).
 **Design and rationale:** [../docs/CHAT_WIDGET_SDK.md](../docs/CHAT_WIDGET_SDK.md).
 
 ## The one important idea
 
 The browser only ever talks to the host app's **own** origin. The host
 backend proxies both the Keycloak token exchange and the EAIP `/mcp` calls.
-EAIP gets no new public surface and no per-integration CORS change — its
-`/mcp` endpoint is only ever reached server-to-server, exactly as it is today.
-The service-account token never reaches the browser.
+`/mcp` is publicly routed, but EAIP's `CORS_ORIGINS` is a single origin, so a
+browser on an integrator's domain can't call it cross-origin. Reached
+server-to-server there is no `Origin` and no preflight — EAIP needs no CORS
+change and no per-integrator config. The service-account token never reaches
+the browser.
 
 This is why the widget works from any integrator's domain: the cross-origin
 problem is solved by not being cross-origin.

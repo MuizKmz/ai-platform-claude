@@ -21,11 +21,14 @@ service-account secret, mints and caches a token, forwards MCP calls
 server-to-server). 44 tests against fakes of Keycloak and `/mcp`.
 
 The plan's first draft had the browser call `/mcp` directly with a short-lived
-token. That cannot work: `/mcp` is not in the production reverse proxy's routed
-paths, and `CORS_ORIGINS` is a single origin. So the host backend proxies the
-tool calls too — EAIP gets no new public surface, no per-integration CORS
-change, and the token never reaches the browser. Do not add a browser-to-EAIP
-path or a per-origin CORS allowlist; the proxy shape is the design.
+token. That fails from a browser on an integrator's own domain: `CORS_ORIGINS`
+is a single origin and `/mcp` inherits the global CORS middleware, so the
+preflight is refused. (`/mcp` is publicly routed — that was briefly thought to
+be a second blocker and isn't.) So the host backend proxies the tool calls too,
+reached server-to-server where there is no `Origin` — EAIP needs no CORS change
+and no per-integrator config, and the token never reaches the browser. Do not
+add a browser-to-EAIP path or a per-origin CORS allowlist; the proxy shape is
+the design.
 
 **Still open in Phase 12:** the SETUP.md smoke run against the live endpoint
 with a real `eaip-mcp` credential, and migrating the IoT integration onto the

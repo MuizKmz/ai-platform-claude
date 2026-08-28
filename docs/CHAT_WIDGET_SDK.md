@@ -43,35 +43,40 @@ was where the *server-side* secret-holding logic lives, and Option A puts it
 somewhere already trusted rather than building a smaller, newer version of
 Keycloak ourselves for no scaling benefit.
 
-## The browser cannot reach EAIP directly — so it doesn't
+## The browser cannot reach EAIP cross-origin — so it doesn't
 
 An earlier draft of this plan had the widget call `https://<eaip-host>/mcp`
 directly with a short-lived token, the way `MCP-SETUP.md`'s `curl` examples
 do. **That works from `curl` and from Claude Desktop. It does not work from a
-browser**, for two independent reasons found by reading the live deployment
-([infra/DEPLOY-aapanel.md](../infra/DEPLOY-aapanel.md),
-[docker-compose.prod.yml](../docker-compose.prod.yml)):
+browser on an integrator's own domain**, because of CORS.
 
-1. **`/mcp` is not routed publicly.** The production reverse proxy forwards
-   `/v1/*`, `/health`, `/realms/*`, `/admin/*`, `/resources/*` and nothing
-   else. From `aiplatform.clbgroups.com` the MCP endpoint is simply
-   unreachable — a request to it falls through to the frontend.
-2. **CORS is a single-origin allowlist.** `CORS_ORIGINS` is exactly
-   `https://aiplatform.clbgroups.com`. A widget embedded in an integrator's
-   own site (`wms.example.com`) sends an `Origin` that is not on that list,
-   the browser's preflight gets no `Access-Control-Allow-Origin`, and `fetch`
-   throws before the request is even sent. `/mcp` has no CORS handling of its
-   own; it inherits the global middleware.
+`/mcp` *is* publicly routed on the production deployment — the Nginx config
+got a `/mcp` proxy rule during the deployment, so
+`https://aiplatform.clbgroups.com/mcp` reaches the backend (a bare `GET`
+returns `405`, not the frontend's HTML). An earlier version of this section
+said it was not routed; that was corrected once verified live. Routing was
+never the real blocker anyway — **CORS is:**
 
-`curl` sidesteps both — no `Origin` header, no preflight. The browser widget
-is the one client that hits both walls.
+`CORS_ORIGINS` is exactly `https://aiplatform.clbgroups.com` — a
+single-origin allowlist, and `/mcp` has no CORS handling of its own, it
+inherits the global middleware. A widget embedded in an integrator's site
+(`wms.example.com`) sends an `Origin` that is not on that list, the browser's
+preflight gets no `Access-Control-Allow-Origin`, and `fetch` throws before
+the request is even sent. `curl` and Claude Desktop send no `Origin` and do
+no preflight, which is why they never hit this. The browser widget is the one
+client that does.
 
-**The fix: the browser only ever talks to its own origin.** The host app's
+Widening the allowlist per integrator would mean EAIP maintains a list of
+every embedding origin, forever — an operational burden and a bigger attack
+surface, to solve a problem that has a cleaner answer.
+
+**The answer: the browser only ever talks to its own origin.** The host app's
 own backend proxies *both* the Keycloak token exchange and the MCP tool
-calls. EAIP gets no new surface, no new proxy rule, no CORS change — its
-`/mcp` endpoint is only ever reached server-to-server, exactly as it is
-today. And the token never reaches the browser at all, which is a stronger
-property than the earlier draft's (where the widget briefly held it).
+calls. EAIP gets no CORS change and no per-integrator configuration — its
+`/mcp` endpoint is only ever reached server-to-server, where there is no
+`Origin` and no preflight. And the token never reaches the browser at all,
+which is a stronger property than the earlier draft's (where the widget
+briefly held it).
 
 ## Architecture
 
@@ -86,11 +91,12 @@ property than the earlier draft's (where the widget briefly held it).
 │                       │  (4)   │  POST /api/eaip/mcp                │        └───────────────────┘
 │                       ├───────►│    -> forwards one JSON-RPC call   │  (3)   ┌───────────────────┐
 │                       │◄───────┤       with the cached token        ├───────►│  EAIP /mcp          │
-└──────────────────────┘        └────────────────────────────────┘        │  (UNCHANGED — not  │
-     every call is same-origin.                                            │   public, not CORS-│
-     no token in the browser.                                              │   widened. only    │
-                                                                          │   ever reached     │
-                                                                          │   from here.)      │
+└──────────────────────┘        └────────────────────────────────┘        │  (UNCHANGED — no   │
+     every call is same-origin.                                            │   CORS change, no  │
+     no token in the browser.                                              │   per-integrator   │
+                                                                          │   config. reached  │
+                                                                          │   server-to-server │
+                                                                          │   only.)           │
                                                                           └───────────────────┘
 ```
 

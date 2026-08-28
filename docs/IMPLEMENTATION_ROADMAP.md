@@ -765,12 +765,16 @@ connector gets created.
 
 ### Why the widget proxies through the host backend
 The first draft had the browser call `/mcp` directly with a short-lived
-token. Checking it against the live deployment killed that: `/mcp` is not in
-the production reverse proxy's routed paths (`/v1`, `/health`, `/realms`,
-`/admin`, `/resources`, `/` only), and `CORS_ORIGINS` is a single origin.
-`curl` and Claude Desktop don't hit either wall; a browser does. So the host
-backend proxies the tool calls too — EAIP gets no new public surface and no
-per-integration CORS change, and the token never reaches the browser.
+token. That fails from a browser on an integrator's own domain because
+`CORS_ORIGINS` is a single origin and `/mcp` inherits the global CORS
+middleware — the preflight gets no `Access-Control-Allow-Origin` and `fetch`
+throws. `curl` and Claude Desktop send no `Origin` and skip the preflight,
+which is why they never hit it. (`/mcp` *is* publicly routed — that was
+briefly thought to be a second blocker and isn't.) Widening the allowlist
+per integrator is an operational burden and a bigger attack surface. So the
+host backend proxies the tool calls too — reached server-to-server, where
+there is no `Origin`; EAIP needs no CORS change and no per-integrator config,
+and the token never reaches the browser.
 
 ### Definition of done
 - [x] `sdk/eaip-client`, `sdk/eaip-widget`, `sdk/eaip-proxy-endpoint` built
